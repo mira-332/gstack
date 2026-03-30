@@ -1,362 +1,756 @@
 # Architecture
 
-This document explains **why** gstack is built the way it is. For setup and commands, see CLAUDE.md. For contributing, see CONTRIBUTING.md.
+This document defines the target architecture for the incident-driven QA application
+built around Codex and selected gstack runtime capabilities.
 
-## The core idea
+The old framing was too close to "gstack internals on Windows."
+That is necessary, but it is not the product.
 
-gstack gives Claude Code a persistent browser and a set of opinionated workflow skills. The browser is the hard part — everything else is Markdown.
+The product is a QA operating system for teams that already feel pain from:
 
-The key insight: an AI agent interacting with a browser needs **sub-second latency** and **persistent state**. If every command cold-starts a browser, you're waiting 3-5 seconds per tool call. If the browser dies between commands, you lose cookies, tabs, and login sessions. So gstack runs a long-lived Chromium daemon that the CLI talks to over localhost HTTP.
+- escaped production bugs
+- repeated regressions
+- slow triage
+- flaky manual verification
+- ad hoc bug reports that never become reusable tests
 
+The narrow wedge is:
+
+- turn a production incident or escaped defect into a reproducible Case
+- convert that Case into one or more executable Scenarios
+- generate or refine deterministic Scripts
+- run them repeatedly and store evidence
+- extract reusable Knowledge so the same class of issue does not escape again
+
+## Product purpose
+
+The app exists to compress the loop from incident to regression protection.
+
+Instead of treating QA as a pile of screenshots, chat logs, and one-off fixes, the
+system should turn each meaningful failure into durable assets:
+
+1. a Case that captures what broke
+2. a Scenario that defines what should be tested
+3. a Script that can execute the scenario
+4. a Run record with evidence
+5. a Knowledge entry that explains what to remember next time
+
+The real business outcome is not "more tests."
+It is lower recurrence, faster triage, and fewer bugs escaping to users.
+
+## Why gstack is in this design
+
+We are not embedding all of gstack as-is.
+We are taking the parts that directly help this product ship:
+
+- `browse`: persistent local browser runtime with stateful sessions
+- `qa`: test -> fix -> verify workflow with evidence capture
+- `office-hours`: problem framing and design-document discipline
+- `plan-eng-review`: architecture and verification hardening before implementation
+- `cso`: security review of secrets, trust boundaries, and dangerous automation paths
+
+These pieces matter because they solve the hardest operator-side problems:
+
+- real browser state
+- reproducible evidence
+- structured planning
+- systematic verification
+- security scrutiny before "autonomous QA" grows teeth
+
+We are explicitly **not** importing these gstack assumptions:
+
+- prompt files as the product
+- API-first automation as the core runtime
+- host-native browser tools as interchangeable with gstack browser state
+- a remote control plane on the critical path
+
+## How Codex is used
+
+Codex is the control plane, not the data plane.
+
+That distinction is critical.
+
+Codex should be used for:
+
+- incident intake summarization
+- test charter generation
+- scenario decomposition
+- exploratory browser execution through the gstack runtime
+- deterministic script drafting
+- root-cause analysis
+- fix proposal drafting
+- report synthesis
+- review passes using `office-hours`, `plan-eng-review`, and `cso`
+
+Codex should **not** be the source of truth for:
+
+- persistent product data
+- artifact storage
+- scheduling
+- deterministic replay
+- direct database mutation
+- direct browser control outside the gstack runtime when a gstack QA flow is active
+
+The rule is simple:
+
+- Codex decides
+- product services store
+- workers execute deterministic runs
+- gstack provides the local operator runtime
+
+Planning docs and local operator notes are authoring inputs only.
+Canonical acceptance criteria, preconditions, assertions, environments, and approval
+state must live on product-plane records.
+
+## Product goals
+
+1. Incident -> reproducible Case in minutes, not days.
+2. Case -> executable Scenario and Script in the same working session.
+3. Every meaningful QA conclusion has attached evidence.
+4. Deterministic re-runs happen without re-prompting Codex.
+5. The operator workflow works on a Windows laptop without WSL.
+6. Sensitive artifacts stay local or explicitly governed.
+
+## Non-goals
+
+- Not a generic test case management suite.
+- Not a replacement for CI.
+- Not a multi-tenant autonomous QA cloud in MVP.
+- Not a system where Codex freehands every regression run from scratch.
+- Not a browser-MCP-dependent architecture.
+
+## Product thesis
+
+This app is an incident-driven QA operating system made of two cooperating planes:
+
+1. a **product plane** that stores Cases, Scenarios, Scripts, Runs, and Knowledge
+2. an **operator plane** that lets Codex and gstack turn messy incidents into durable QA assets
+
+The operator plane is where intelligence lives.
+The product plane is where history, evidence, and repeatability live.
+
+## System overview
+
+```text
+Users / QA / Eng / Support
+  |
+  v
+Next.js frontend
+  |
+  v
+Go API
+  |
+  +--> PostgreSQL                # source of truth
+  +--> pgvector                  # similarity / recall assist
+  +--> Object storage            # screenshots, traces, logs, reports
+  |
+  +--> Worker queue
+         |
+         +--> Go coordinator
+         +--> TypeScript Playwright runner
+
+Operator lane (Windows, no WSL)
+  |
+  +--> Codex CLI
+         |
+         +--> office-hours / plan-eng-review / cso
+         +--> gstack browse runtime
+         +--> gstack qa workflow
+  |
+  +--> local repo + .gstack state
+  |
+  +--> produced artifacts / proposed scripts / reports
+         |
+         +--> Go ingestion API
+                |
+                +--> PostgreSQL + object storage
 ```
-Claude Code                     gstack
-─────────                      ──────
-                               ┌──────────────────────┐
-  Tool call: $B snapshot -i    │  CLI (compiled binary)│
-  ─────────────────────────→   │  • reads state file   │
-                               │  • POST /command      │
-                               │    to localhost:PORT   │
-                               └──────────┬───────────┘
-                                          │ HTTP
-                               ┌──────────▼───────────┐
-                               │  Server (Bun.serve)   │
-                               │  • dispatches command  │
-                               │  • talks to Chromium   │
-                               │  • returns plain text  │
-                               └──────────┬───────────┘
-                                          │ CDP
-                               ┌──────────▼───────────┐
-                               │  Chromium (headless)   │
-                               │  • persistent tabs     │
-                               │  • cookies carry over  │
-                               │  • 30min idle timeout  │
-                               └───────────────────────┘
+
+## What the app does for a user
+
+The user journey is:
+
+1. An incident, escaped bug, or flaky report is created as a Case.
+2. The system or operator derives one or more Scenarios from the Case.
+3. Codex uses the local browser runtime to reproduce or explore the issue.
+4. A deterministic Script is created or updated.
+5. The Script is executed by the worker, producing a Run and artifacts.
+6. A Knowledge entry is extracted so future similar incidents are easier to triage.
+
+That is the core loop.
+
+## Operator-to-product ingestion
+
+The operator lane is allowed to discover, draft, and collect evidence.
+It is not allowed to silently become the product source of truth.
+
+Everything durable crosses into the product plane through a dedicated ingestion boundary.
+
+```text
+Codex + gstack operator run
+  -> local evidence bundle
+  -> create ingestion session via Go API
+  -> receive presigned upload targets + idempotency key
+  -> upload artifacts first
+  -> submit metadata second
+  -> API validates references and creates/updates Case / Scenario / Script / Run / Knowledge rows
+  -> ingestion session sealed or rolled back
 ```
 
-First call starts everything (~3s). Every call after: ~100-200ms.
+### Ingestion ownership
 
-## Why Bun
+- The Go API owns durable record creation.
+- Object storage receives artifacts before metadata is committed.
+- PostgreSQL rows are created only after artifact references validate.
+- The worker consumes only persisted records, never loose local files.
 
-Node.js would work. Bun is better here for three reasons:
+### Ingestion rules
 
-1. **Compiled binaries.** `bun build --compile` produces a single ~58MB executable. No `node_modules` at runtime, no `npx`, no PATH configuration. The binary just runs. This matters because gstack installs into `~/.claude/skills/` where users don't expect to manage a Node.js project.
+- Every ingestion session gets an idempotency key.
+- Artifact upload happens before final metadata commit.
+- Metadata commit must be transactional.
+- If artifact upload fails, the ingestion session stays unsealed and no product-plane record is finalized.
+- If metadata commit fails after upload, the session is marked failed and cleanup/retention policy decides whether the orphaned artifacts are retried or deleted.
 
-2. **Native SQLite.** Cookie decryption reads Chromium's SQLite cookie database directly. Bun has `new Database()` built in — no `better-sqlite3`, no native addon compilation, no gyp. One less thing that breaks on different machines.
+## Domain model
 
-3. **Native TypeScript.** The server runs as `bun run server.ts` during development. No compilation step, no `ts-node`, no source maps to debug. The compiled binary is for deployment; source files are for development.
+The MVP data model from `qa_architecture.md` is useful, but the product needs explicit
+cardinality, lifecycle, and approval boundaries.
 
-4. **Built-in HTTP server.** `Bun.serve()` is fast, simple, and doesn't need Express or Fastify. The server handles ~10 routes total. A framework would be overhead.
+### Core tables
 
-The bottleneck is always Chromium, not the CLI or server. Bun's startup speed (~1ms for the compiled binary vs ~100ms for Node) is nice but not the reason we chose it. The compiled binary and native SQLite are.
+#### `cases`
 
-## The daemon model
+`cases` capture incoming pain.
 
-### Why not start a browser per command?
+Required fields:
 
-Playwright can launch Chromium in ~2-3 seconds. For a single screenshot, that's fine. For a QA session with 20+ commands, it's 40+ seconds of browser startup overhead. Worse: you lose all state between commands. Cookies, localStorage, login sessions, open tabs — all gone.
+- `case_id`
+- `source_type` (`incident`, `bug_report`, `support`, `qa_find`, `postmortem`)
+- `source_ref`
+- `title`
+- `summary`
+- `severity`
+- `feature_area`
+- `environment`
+- `repro_steps`
+- `expected`
+- `actual`
+- `status` (`new`, `triaged`, `scenarioized`, `mitigated`, `closed`)
 
-The daemon model means:
+#### `scenarios`
 
-- **Persistent state.** Log in once, stay logged in. Open a tab, it stays open. localStorage persists across commands.
-- **Sub-second commands.** After the first call, every command is just an HTTP POST. ~100-200ms round-trip including Chromium's work.
-- **Automatic lifecycle.** The server auto-starts on first use, auto-shuts down after 30 minutes idle. No process management needed.
+`scenarios` are canonical test intent records.
+They are product-plane records, not local notes.
 
-### State file
+Required fields:
 
-The server writes `.gstack/browse.json` (atomic write via tmp + rename, mode 0o600):
+- `scenario_id`
+- `title`
+- `feature_area`
+- `criticality`
+- `charter`
+- `preconditions`
+- `success_criteria`
+- `edge_cases`
+- `assertions`
+- `status` (`draft`, `reviewed`, `approved`, `retired`)
 
-```json
-{ "pid": 12345, "port": 34567, "token": "uuid-v4", "startedAt": "...", "binaryVersion": "abc123" }
-```
+#### `case_scenarios`
 
-The CLI reads this file to find the server. If the file is missing or the server fails an HTTP health check, the CLI spawns a new server. On Windows, PID-based process detection is unreliable in Bun binaries, so the health check (GET /health) is the primary liveness signal on all platforms.
+This join table resolves the real relationship: one Case may create multiple Scenarios,
+and one Scenario may protect against multiple Cases.
 
-### Port selection
+Required fields:
 
-Random port between 10000-60000 (retry up to 5 on collision). This means 10 Conductor workspaces can each run their own browse daemon with zero configuration and zero port conflicts. The old approach (scanning 9400-9409) broke constantly in multi-workspace setups.
+- `case_id`
+- `scenario_id`
+- `link_reason`
 
-### Version auto-restart
+#### `scripts`
 
-The build writes `git rev-parse HEAD` to `browse/dist/.version`. On each CLI invocation, if the binary's version doesn't match the running server's `binaryVersion`, the CLI kills the old server and starts a new one. This prevents the "stale binary" class of bugs entirely — rebuild the binary, next command picks it up automatically.
+`scripts` are stable logical assets.
+They point to the currently active approved version, not to mutable source text.
+
+Required fields:
+
+- `script_id`
+- `scenario_id`
+- `runner_type`
+- `owner`
+- `active_version_id`
+- `status` (`draft_only`, `active`, `retired`)
+
+#### `script_versions`
+
+`script_versions` are immutable executable revisions.
+This is the approval boundary between AI output and worker execution.
+
+Required fields:
+
+- `script_version_id`
+- `script_id`
+- `repo_path`
+- `language`
+- `version`
+- `source_hash`
+- `provenance` (`human`, `codex`, `mixed`)
+- `approval_state` (`draft`, `reviewed`, `approved`, `sealed`, `revoked`)
+- `approved_by`
+
+#### `runs`
+
+`runs` are append-only execution records for one approved script version.
+
+Required fields:
+
+- `run_id`
+- `script_version_id`
+- `trigger_type`
+- `environment`
+- `commit_sha`
+- `result`
+- `started_at`
+- `finished_at`
+- `failure_summary`
+- `status` (`queued`, `running`, `passed`, `failed`, `errored`, `canceled`)
+
+#### `run_artifacts`
+
+Artifacts should not live as loose arrays inside `runs`.
+They need their own records for retention, redaction, and access control.
+
+Required fields:
+
+- `run_artifact_id`
+- `run_id`
+- `artifact_class`
+- `storage_uri`
+- `redaction_state`
+- `retention_policy`
+
+#### `knowledge`
+
+Knowledge is the memory layer.
+It is not the source of truth for correctness, but it is the source of leverage.
+
+Required fields:
+
+- `knowledge_id`
+- `type` (`best_practice`, `anti_pattern`, `incident_pattern`, `triage_note`)
+- `summary`
+- `best_practice`
+- `embedding`
+- `confidence`
+
+#### `knowledge_links`
+
+Knowledge should link through explicit relational records, not ID arrays.
+
+Required fields:
+
+- `knowledge_id`
+- `entity_type` (`case`, `scenario`, `script_version`, `run`)
+- `entity_id`
+
+### State transitions
+
+- Case: `new -> triaged -> scenarioized -> mitigated -> closed`
+- Scenario: `draft -> reviewed -> approved -> retired`
+- Script version: `draft -> reviewed -> approved -> sealed`; only `approved` or `sealed` may be executed by workers
+- Run: `queued -> running -> passed|failed|errored|canceled`
+
+## Storage architecture
+
+### PostgreSQL
+
+PostgreSQL is the source of truth for Cases, Scenarios, Scripts, Runs, and Knowledge metadata.
+Business correctness must not depend on vector recall.
+
+### pgvector
+
+pgvector is helpful, but strictly assistive.
+Use it for:
+
+- similar-case recall
+- similar-scenario suggestions
+- knowledge retrieval during triage and report generation
+
+Do not use it for:
+
+- authorization
+- run eligibility
+- deterministic orchestration
+
+### Object storage
+
+Object storage holds:
+
+- screenshots
+- Playwright traces
+- console logs
+- network logs
+- QA reports
+- exported run summaries
+
+Artifacts are append-only evidence.
+The storage layer should prefer immutable references over in-place mutation.
+
+## What we import from gstack
+
+### 1. Persistent browser runtime
+
+We are importing the gstack browser model because it solves the real operator problem:
+
+- browser state persists across commands
+- interactive flows can be reproduced
+- the operator can hand off auth or CAPTCHA and resume
+- evidence can be captured while context is still hot
+
+This is more valuable than stateless browser screenshots.
+
+### 2. QA workflow
+
+We are importing the gstack `qa` idea, but adapting it to this product:
+
+- exploratory run to understand the issue
+- evidence capture while reproducing
+- deterministic script creation for replay
+- re-verification after changes
+
+The product should store the outputs of that flow, not just the text summary.
+
+### 3. Planning and review discipline
+
+`office-hours`, `plan-eng-review`, and `cso` are being used as product design gates:
+
+- `office-hours` forces the actual user problem to be explicit
+- `plan-eng-review` forces testability, data flow, and verification clarity
+- `cso` forces trust boundaries and security posture to be explicit
+
+That review discipline is as important as the runtime.
+
+## Codex operating model
+
+Codex should run in three explicit roles.
+
+### Planner
+
+Used when a new capability, incident pattern, or workflow needs to be shaped.
+
+Primary tools:
+
+- `office-hours`
+- design docs
+- scenario decomposition
+
+Outputs:
+
+- design notes
+- scenario proposals
+- acceptance criteria
+
+### Operator
+
+Used when reproducing issues or exploring behavior.
+
+Primary tools:
+
+- gstack `browse`
+- gstack `qa`
+
+Outputs:
+
+- evidence
+- repro steps
+- candidate scripts
+- operator notes
+
+### Reviewer
+
+Used before implementation and before ship.
+
+Primary tools:
+
+- `plan-eng-review`
+- `cso`
+
+Outputs:
+
+- architecture findings
+- security findings
+- missing tests
+- explicit accept/reject criteria
+
+## Execution strategy
+
+### Exploratory lane
+
+Exploratory testing is Codex-guided and charter-driven.
+
+But the execution substrate is the gstack browser runtime, not arbitrary host browser tools.
+
+Flow:
+
+1. select Case or Scenario
+2. Codex reads the charter and context
+3. Codex drives the gstack browser runtime
+4. evidence is captured immediately
+5. findings become candidate Scenarios or Knowledge
+
+### Regression lane
+
+Regression runs must be deterministic.
+
+That means:
+
+- Playwright scripts
+- archived versions
+- explicit environments
+- stored artifacts
+- repeatable worker execution
+
+Codex may draft the script.
+The worker owns repeated execution.
+
+### Archive rule
+
+Do not silently mutate old Scripts after they become part of regression protection.
+
+Use versioned Scripts and append-only Runs.
+If a Script changes materially, create a new version and preserve the old one for auditability.
+
+### Promotion boundary for AI-authored output
+
+AI-authored output is never executable by default.
+
+The minimum promotion path is:
+
+1. `draft` - Codex-generated or operator-authored candidate
+2. `reviewed` - human or policy validation completed
+3. `approved` - allowed to run in controlled environments
+4. `sealed` - immutable approved revision for repeatable worker execution
+
+Workers must execute only `approved` or `sealed` script versions.
+High-risk actions such as arbitrary file reads, dangerous network targets, or privileged
+browser automation require static policy validation before approval.
+
+## QA input precedence
+
+The QA layer should resolve intent in this order:
+
+1. persisted Scenario record and its canonical assertions
+2. approved Script and active environment config
+3. latest `plan-eng-review` test plan as authoring context
+4. latest `office-hours` design intent as authoring context
+5. current git diff and commit intent
+6. direct exploration
+
+If the system falls back, that fallback should be visible in the report.
+
+## Suggested technology split
+
+The MVP stack proposed in `qa_architecture.md` is directionally right.
+The recommended split is:
+
+- Frontend: React / Next.js
+- Backend API: Go
+- Worker coordinator: Go
+- Browser execution and script tooling: TypeScript + Playwright
+- DB: PostgreSQL + pgvector
+- Artifact store: object storage
+
+Reasoning:
+
+- Go is a strong fit for API and job orchestration
+- TypeScript is a strong fit for Playwright and test asset generation
+- PostgreSQL keeps the core model grounded
+- pgvector adds recall without becoming the core execution engine
 
 ## Security model
 
-### Localhost only
+### Primary trust boundaries
 
-The HTTP server binds to `localhost`, not `0.0.0.0`. It's not reachable from the network.
+1. browser content is untrusted
+2. Codex output is advisory, not automatically trusted
+3. product data is sensitive
+4. local operator artifacts are sensitive
+5. deterministic worker runs must be auditable
 
-### Bearer token auth
+### Core security rules
 
-Every server session generates a random UUID token, written to the state file with mode 0o600 (owner-only read). Every HTTP request must include `Authorization: Bearer <token>`. If the token doesn't match, the server returns 401.
+- Codex does not directly write to production databases
+- page content from the app under test is treated as data, not instructions
+- the Codex control plane must not receive raw cookies, bearer tokens, or local storage secrets
+- secret inspection is break-glass only and must stay outside model-visible context
+- screenshots, console logs, traces, and reports are sensitive artifacts
+- artifact export is explicit
+- local browser control routes remain loopback-only and authenticated where sensitive
+- token/state material rotates on restart
+- network shares and permissive local paths fail closed
 
-This prevents other processes on the same machine from talking to your browse server. The cookie picker UI (`/cookie-picker`) and health check (`/health`) are exempt — they're localhost-only and don't execute commands.
+### Runtime trust model
 
-### Cookie security
+Repo-local runtime precedence is useful, but it is also a supply-chain risk.
 
-Cookies are the most sensitive data gstack handles. The design:
+So the trusted-runtime rule is:
 
-1. **Keychain access requires user approval.** First cookie import per browser triggers a macOS Keychain dialog. The user must click "Allow" or "Always Allow." gstack never silently accesses credentials.
+- repo-local `.agents/skills/gstack` may take precedence only if its runtime bundle matches a signed manifest or pinned digest set
+- the trust check must cover at least `browse.exe` and `browse/dist/server-node.mjs`
+- compatibility checks are not enough; trust verification is separate
+- on trust mismatch, the operator lane must fail closed or fall back to a trusted installed runtime
 
-2. **Decryption happens in-process.** Cookie values are decrypted in memory (PBKDF2 + AES-128-CBC), loaded into the Playwright context, and never written to disk in plaintext. The cookie picker UI never displays cookie values — only domain names and counts.
+### Secret-bearing local state
 
-3. **Database is read-only.** gstack copies the Chromium cookie DB to a temp file (to avoid SQLite lock conflicts with the running browser) and opens it read-only. It never modifies your real browser's cookie database.
+Repo `.gstack/` should not be the long-term home of secret-bearing state.
 
-4. **Key caching is per-session.** The Keychain password + derived AES key are cached in memory for the server's lifetime. When the server shuts down (idle timeout or explicit stop), the cache is gone.
+The target design is:
 
-5. **No cookie values in logs.** Console, network, and dialog logs never contain cookie values. The `cookies` command outputs cookie metadata (domain, name, expiry) but values are truncated.
+- repo `.gstack/` keeps non-sensitive metadata and evidence manifests
+- live bearer material and secret session state move to a user-scoped secure location
+- Windows uses DPAPI or an equivalent user-scoped protection boundary for secret-bearing state
 
-### Shell injection prevention
+### Windows operator posture
 
-The browser registry (Comet, Chrome, Arc, Brave, Edge) is hardcoded. Database paths are constructed from known constants, never from user input. Keychain access uses `Bun.spawn()` with explicit argument arrays, not shell string interpolation.
+For Windows no-WSL operation, the minimum secure posture is:
 
-## The ref system
+- non-admin daily-use account
+- Defender and SmartScreen enabled
+- no shared workstation use
+- no elevated browser sessions
+- non-loopback browsing only from a dedicated dev profile
+- repo-local gstack runtime takes precedence over stale global copies
 
-Refs (`@e1`, `@e2`, `@c1`) are how the agent addresses page elements without writing CSS selectors or XPath.
+### Authenticated flows
 
-### How it works
+Authenticated browser flows are explicitly weaker on Windows until DPAPI support exists.
 
-```
-1. Agent runs: $B snapshot -i
-2. Server calls Playwright's page.accessibility.snapshot()
-3. Parser walks the ARIA tree, assigns sequential refs: @e1, @e2, @e3...
-4. For each ref, builds a Playwright Locator: getByRole(role, { name }).nth(index)
-5. Stores Map<string, RefEntry> on the BrowserManager instance (role + name + Locator)
-6. Returns the annotated tree as plain text
+Supported today:
 
-Later:
-7. Agent runs: $B click @e3
-8. Server resolves @e3 → Locator → locator.click()
-```
+- manual login in the Playwright session
+- handoff / resume
+- cookie-file import supplied by the user
 
-### Why Locators, not DOM mutation
+Not yet supported as a production-ready path:
 
-The obvious approach is to inject `data-ref="@e1"` attributes into the DOM. This breaks on:
+- unattended import from installed Chromium profiles on Windows
 
-- **CSP (Content Security Policy).** Many production sites block DOM modification from scripts.
-- **React/Vue/Svelte hydration.** Framework reconciliation can strip injected attributes.
-- **Shadow DOM.** Can't reach inside shadow roots from the outside.
+### Auth support tiers
 
-Playwright Locators are external to the DOM. They use the accessibility tree (which Chromium maintains internally) and `getByRole()` queries. No DOM mutation, no CSP issues, no framework conflicts.
+- public or anonymous flows: supported for deterministic regression
+- manual-auth flows: supported for exploration and evidence gathering
+- unattended auth-dependent regression on Windows: blocked until DPAPI-backed secret storage, cleanup, and rotation checks exist
 
-### Ref lifecycle
+### Artifact protection policy
 
-Refs are cleared on navigation (the `framenavigated` event on the main frame). This is correct — after navigation, all locators are stale. The agent must run `snapshot` again to get fresh refs. This is by design: stale refs should fail loudly, not click the wrong element.
+Sensitive artifacts need enforcement, not just acknowledgement.
 
-### Ref staleness detection
+At minimum the product should classify artifacts as:
 
-SPAs can mutate the DOM without triggering `framenavigated` (e.g. React router transitions, tab switches, modal opens). This makes refs stale even though the page URL didn't change. To catch this, `resolveRef()` performs an async `count()` check before using any ref:
+- `standard` - low-risk evidence
+- `sensitive` - internal URLs, stack traces, or customer identifiers
+- `restricted` - auth-adjacent traces or production data excerpts
 
-```
-resolveRef(@e3) → entry = refMap.get("e3")
-                → count = await entry.locator.count()
-                → if count === 0: throw "Ref @e3 is stale — element no longer exists. Run 'snapshot' to get fresh refs."
-                → if count > 0: return { locator }
-```
+And enforce:
 
-This fails fast (~5ms overhead) instead of letting Playwright's 30-second action timeout expire on a missing element. The `RefEntry` stores `role` and `name` metadata alongside the Locator so the error message can tell the agent what the element was.
+- default redaction before export
+- per-workspace encryption at rest
+- TTL and retention rules by artifact class
+- short-lived access URLs
+- audited export and legal-hold exceptions
 
-### Cursor-interactive refs (@c)
+## Windows no-WSL operator architecture
 
-The `-C` flag finds elements that are clickable but not in the ARIA tree — things styled with `cursor: pointer`, elements with `onclick` attributes, or custom `tabindex`. These get `@c1`, `@c2` refs in a separate namespace. This catches custom components that frameworks render as `<div>` but are actually buttons.
+The operator lane must work on:
 
-## Logging architecture
+- Windows 11
+- PowerShell for runtime
+- Git Bash only for setup where still required
+- no WSL
+- Codex CLI as the reference host
 
-Three ring buffers (50,000 entries each, O(1) push):
+The gstack browser runtime remains the authoritative browser control plane for product QA flows.
 
-```
-Browser events → CircularBuffer (in-memory) → Async flush to .gstack/*.log
-```
+That means:
 
-Console messages, network requests, and dialog events each have their own buffer. Flushing happens every 1 second — the server appends only new entries since the last flush. This means:
+- repo-local `.agents/skills/gstack` wins when present
+- `~/.codex/skills/gstack` is fallback only
+- host-native browser tools are not treated as equivalent during gstack-driven QA
+- `browse.exe` and `browse/dist/server-node.mjs` are part of one compatibility bundle
 
-- HTTP request handling is never blocked by disk I/O
-- Logs survive server crashes (up to 1 second of data loss)
-- Memory is bounded (50K entries × 3 buffers)
-- Disk files are append-only, readable by external tools
+## Production readiness gates
 
-The `console`, `network`, and `dialog` commands read from the in-memory buffers, not disk. Disk files are for post-mortem debugging.
+Readiness has two parts.
 
-## SKILL.md template system
+### Product-plane ready
 
-### The problem
+The app is not ready until:
 
-SKILL.md files tell Claude how to use the browse commands. If the docs list a flag that doesn't exist, or miss a command that was added, the agent hits errors. Hand-maintained docs always drift from code.
+1. Cases, Scenarios, Scripts, Runs, and Knowledge can be stored and linked correctly.
+2. A deterministic Script can be executed by the worker and produce stored artifacts.
+3. Similar-case recall works without being a correctness dependency.
+4. Evidence retention and retrieval are usable by humans.
 
-### The solution
+### Operator-plane ready
 
-```
-SKILL.md.tmpl          (human-written prose + placeholders)
-       ↓
-gen-skill-docs.ts      (reads source code metadata)
-       ↓
-SKILL.md               (committed, auto-generated sections)
-```
+The operator workflow is not ready until:
 
-Templates contain the workflows, tips, and examples that require human judgment. Placeholders are filled from source code at build time:
+1. Codex can run on Windows no WSL.
+2. gstack browse runtime can drive a local target app.
+3. gstack QA flow can produce a local report bundle.
+4. setup replaces stale runtime assets cleanly.
+5. crash recovery works.
+6. authenticated-flow verification is clearly marked as supported or blocked.
+7. runtime trust verification passes for the repo-local bundle.
+8. artifact ingestion into the product plane succeeds with idempotent behavior.
 
-| Placeholder | Source | What it generates |
-|-------------|--------|-------------------|
-| `{{COMMAND_REFERENCE}}` | `commands.ts` | Categorized command table |
-| `{{SNAPSHOT_FLAGS}}` | `snapshot.ts` | Flag reference with examples |
-| `{{PREAMBLE}}` | `gen-skill-docs.ts` | Startup block: update check, session tracking, contributor mode, AskUserQuestion format |
-| `{{BROWSE_SETUP}}` | `gen-skill-docs.ts` | Binary discovery + setup instructions |
-| `{{BASE_BRANCH_DETECT}}` | `gen-skill-docs.ts` | Dynamic base branch detection for PR-targeting skills (ship, review, qa, plan-ceo-review) |
-| `{{QA_METHODOLOGY}}` | `gen-skill-docs.ts` | Shared QA methodology block for /qa and /qa-only |
-| `{{DESIGN_METHODOLOGY}}` | `gen-skill-docs.ts` | Shared design audit methodology for /plan-design-review and /design-review |
-| `{{REVIEW_DASHBOARD}}` | `gen-skill-docs.ts` | Review Readiness Dashboard for /ship pre-flight |
-| `{{TEST_BOOTSTRAP}}` | `gen-skill-docs.ts` | Test framework detection, bootstrap, CI/CD setup for /qa, /ship, /design-review |
-| `{{CODEX_PLAN_REVIEW}}` | `gen-skill-docs.ts` | Optional cross-model plan review (Codex or Claude subagent fallback) for /plan-ceo-review and /plan-eng-review |
-| `{{DESIGN_SETUP}}` | `resolvers/design.ts` | Discovery pattern for `$D` design binary, mirrors `{{BROWSE_SETUP}}` |
-| `{{DESIGN_SHOTGUN_LOOP}}` | `resolvers/design.ts` | Shared comparison board feedback loop for /design-shotgun, /plan-design-review, /design-consultation |
+### Release matrix
 
-This is structurally sound — if a command exists in code, it appears in docs. If it doesn't exist, it can't appear.
+These gates should be executable, not aspirational.
 
-### The preamble
+| Gate | Required check | Pass condition |
+|------|----------------|----------------|
+| Windows host smoke | clean Windows 11 machine, PowerShell runtime, no WSL | Codex CLI starts and can access the repo without shell/bootstrap drift |
+| Runtime trust | manifest or digest verification of repo-local bundle | `browse.exe` and `server-node.mjs` match trusted metadata |
+| Runtime precedence | repo-local and stale global copies both present | repo-local bundle wins only when trusted; stale global copy is ignored or flagged |
+| Browser smoke | local fixture + `browse.exe` | healthy session, page load, DOM read, console read |
+| QA smoke | local fixture + gstack `qa` | local report bundle and evidence manifest created |
+| Ingestion smoke | operator uploads evidence through ingestion API | artifacts upload first, metadata commit second, idempotency key prevents duplicate records |
+| Crash recovery | stale or killed browser daemon | next invocation restarts cleanly and re-establishes health |
+| Auth support check | login-required target on Windows | either manual-auth exploratory path succeeds or run is explicitly marked blocked for unattended regression |
 
-Every skill starts with a `{{PREAMBLE}}` block that runs before the skill's own logic. It handles five things in a single bash command:
-
-1. **Update check** — calls `gstack-update-check`, reports if an upgrade is available.
-2. **Session tracking** — touches `~/.gstack/sessions/$PPID` and counts active sessions (files modified in the last 2 hours). When 3+ sessions are running, all skills enter "ELI16 mode" — every question re-grounds the user on context because they're juggling windows.
-3. **Contributor mode** — reads `gstack_contributor` from config. When true, the agent files casual field reports to `~/.gstack/contributor-logs/` when gstack itself misbehaves.
-4. **AskUserQuestion format** — universal format: context, question, `RECOMMENDATION: Choose X because ___`, lettered options. Consistent across all skills.
-5. **Search Before Building** — before building infrastructure or unfamiliar patterns, search first. Three layers of knowledge: tried-and-true (Layer 1), new-and-popular (Layer 2), first-principles (Layer 3). When first-principles reasoning reveals conventional wisdom is wrong, the agent names the "eureka moment" and logs it. See `ETHOS.md` for the full builder philosophy.
-
-### Why committed, not generated at runtime?
-
-Three reasons:
-
-1. **Claude reads SKILL.md at skill load time.** There's no build step when a user invokes `/browse`. The file must already exist and be correct.
-2. **CI can validate freshness.** `gen:skill-docs --dry-run` + `git diff --exit-code` catches stale docs before merge.
-3. **Git blame works.** You can see when a command was added and in which commit.
-
-### Template test tiers
-
-| Tier | What | Cost | Speed |
-|------|------|------|-------|
-| 1 — Static validation | Parse every `$B` command in SKILL.md, validate against registry | Free | <2s |
-| 2 — E2E via `claude -p` | Spawn real Claude session, run each skill, check for errors | ~$3.85 | ~20min |
-| 3 — LLM-as-judge | Sonnet scores docs on clarity/completeness/actionability | ~$0.15 | ~30s |
-
-Tier 1 runs on every `bun test`. Tiers 2+3 are gated behind `EVALS=1`. The idea is: catch 95% of issues for free, use LLMs only for judgment calls.
-
-## Command dispatch
-
-Commands are categorized by side effects:
-
-- **READ** (text, html, links, console, cookies, ...): No mutations. Safe to retry. Returns page state.
-- **WRITE** (goto, click, fill, press, ...): Mutates page state. Not idempotent.
-- **META** (snapshot, screenshot, tabs, chain, ...): Server-level operations that don't fit neatly into read/write.
+## KPI
 
-This isn't just organizational. The server uses it for dispatch:
+The KPI list in `qa_architecture.md` is good and should remain:
 
-```typescript
-if (READ_COMMANDS.has(cmd))  → handleReadCommand(cmd, args, bm)
-if (WRITE_COMMANDS.has(cmd)) → handleWriteCommand(cmd, args, bm)
-if (META_COMMANDS.has(cmd))  → handleMetaCommand(cmd, args, bm, shutdown)
-```
+- incident escape rate
+- recurrence rate
+- flaky rate
+- time to triage
+- time to fix
 
-The `help` command returns all three sets so agents can self-discover available commands.
+Add two operational KPIs for this design:
 
-## Error philosophy
+- time from Case creation to first reproducible Run
+- percentage of high-severity Cases that become deterministic Scripts
 
-Errors are for AI agents, not humans. Every error message must be actionable:
+## What changed from the previous design
 
-- "Element not found" → "Element not found or not interactable. Run `snapshot -i` to see available elements."
-- "Selector matched multiple elements" → "Selector matched multiple elements. Use @refs from `snapshot` instead."
-- Timeout → "Navigation timed out after 30s. The page may be slow or the URL may be wrong."
+The design is now centered on the app instead of on gstack internals.
 
-Playwright's native errors are rewritten through `wrapError()` to strip internal stack traces and add guidance. The agent should be able to read the error and know what to do next without human intervention.
+Concretely:
 
-### Crash recovery
+- the product purpose is explicit
+- the app is framed as incident -> scenario -> script -> run -> knowledge
+- gstack is a runtime dependency, not the product itself
+- Codex is the control plane, not the data plane
+- the MVP storage and data model from `qa_architecture.md` are integrated
+- Windows no-WSL constraints remain first-class for the operator lane
 
-The server doesn't try to self-heal. If Chromium crashes (`browser.on('disconnected')`), the server exits immediately. The CLI detects the dead server on the next command and auto-restarts. This is simpler and more reliable than trying to reconnect to a half-dead browser process.
+## Future work
 
-## E2E test infrastructure
-
-### Session runner (`test/helpers/session-runner.ts`)
-
-E2E tests spawn `claude -p` as a completely independent subprocess — not via the Agent SDK, which can't nest inside Claude Code sessions. The runner:
-
-1. Writes the prompt to a temp file (avoids shell escaping issues)
-2. Spawns `sh -c 'cat prompt | claude -p --output-format stream-json --verbose'`
-3. Streams NDJSON from stdout for real-time progress
-4. Races against a configurable timeout
-5. Parses the full NDJSON transcript into structured results
-
-The `parseNDJSON()` function is pure — no I/O, no side effects — making it independently testable.
-
-### Observability data flow
-
-```
-  skill-e2e-*.test.ts
-        │
-        │ generates runId, passes testName + runId to each call
-        │
-  ┌─────┼──────────────────────────────┐
-  │     │                              │
-  │  runSkillTest()              evalCollector
-  │  (session-runner.ts)         (eval-store.ts)
-  │     │                              │
-  │  per tool call:              per addTest():
-  │  ┌──┼──────────┐              savePartial()
-  │  │  │          │                   │
-  │  ▼  ▼          ▼                   ▼
-  │ [HB] [PL]    [NJ]          _partial-e2e.json
-  │  │    │        │             (atomic overwrite)
-  │  │    │        │
-  │  ▼    ▼        ▼
-  │ e2e-  prog-  {name}
-  │ live  ress   .ndjson
-  │ .json .log
-  │
-  │  on failure:
-  │  {name}-failure.json
-  │
-  │  ALL files in ~/.gstack-dev/
-  │  Run dir: e2e-runs/{runId}/
-  │
-  │         eval-watch.ts
-  │              │
-  │        ┌─────┴─────┐
-  │     read HB     read partial
-  │        └─────┬─────┘
-  │              ▼
-  │        render dashboard
-  │        (stale >10min? warn)
-```
-
-**Split ownership:** session-runner owns the heartbeat (current test state), eval-store owns partial results (completed test state). The watcher reads both. Neither component knows about the other — they share data only through the filesystem.
-
-**Non-fatal everything:** All observability I/O is wrapped in try/catch. A write failure never causes a test to fail. The tests themselves are the source of truth; observability is best-effort.
-
-**Machine-readable diagnostics:** Each test result includes `exit_reason` (success, timeout, error_max_turns, error_api, exit_code_N), `timeout_at_turn`, and `last_tool_call`. This enables `jq` queries like:
-```bash
-jq '.tests[] | select(.exit_reason == "timeout") | .last_tool_call' ~/.gstack-dev/evals/_partial-e2e.json
-```
-
-### Eval persistence (`test/helpers/eval-store.ts`)
-
-The `EvalCollector` accumulates test results and writes them in two ways:
-
-1. **Incremental:** `savePartial()` writes `_partial-e2e.json` after each test (atomic: write `.tmp`, `fs.renameSync`). Survives kills.
-2. **Final:** `finalize()` writes a timestamped eval file (e.g. `e2e-20260314-143022.json`). The partial file is never cleaned up — it persists alongside the final file for observability.
-
-`eval:compare` diffs two eval runs. `eval:summary` aggregates stats across all runs in `~/.gstack-dev/evals/`.
-
-### Test tiers
-
-| Tier | What | Cost | Speed |
-|------|------|------|-------|
-| 1 — Static validation | Parse `$B` commands, validate against registry, observability unit tests | Free | <5s |
-| 2 — E2E via `claude -p` | Spawn real Claude session, run each skill, scan for errors | ~$3.85 | ~20min |
-| 3 — LLM-as-judge | Sonnet scores docs on clarity/completeness/actionability | ~$0.15 | ~30s |
-
-Tier 1 runs on every `bun test`. Tiers 2+3 are gated behind `EVALS=1`. The idea: catch 95% of issues for free, use LLMs only for judgment calls and integration testing.
-
-## What's intentionally not here
-
-- **No WebSocket streaming.** HTTP request/response is simpler, debuggable with curl, and fast enough. Streaming would add complexity for marginal benefit.
-- **No MCP protocol.** MCP adds JSON schema overhead per request and requires a persistent connection. Plain HTTP + plain text output is lighter on tokens and easier to debug.
-- **No multi-user support.** One server per workspace, one user. The token auth is defense-in-depth, not multi-tenancy.
-- **No Windows/Linux cookie decryption.** macOS Keychain is the only supported credential store. Linux (GNOME Keyring/kwallet) and Windows (DPAPI) are architecturally possible but not implemented.
-- **No iframe auto-discovery.** `$B frame` supports cross-frame interaction (CSS selector, @ref, `--name`, `--url` matching), but the ref system does not auto-crawl iframes during `snapshot`. You must explicitly enter a frame context first.
+- DPAPI-backed Windows cookie import
+- stronger CI parity for Codex + gstack smoke tests
+- richer Scenario generation from linked Cases
+- flaky-test clustering using Run history
+- stronger artifact redaction and retention controls
