@@ -8,9 +8,10 @@
  *   Auto-shutdown after BROWSE_IDLE_TIMEOUT (default 30 min)
  *
  * State:
- *   State file: <project-root>/.gstack/browse.json (set via BROWSE_STATE_FILE env)
- *   Log files:  <project-root>/.gstack/browse-{console,network,dialog}.log
- *   Port:       random 10000-60000 (or BROWSE_PORT env for debug override)
+ *   Public state: <project-root>/.gstack/browse.json (metadata only)
+ *   Secret state: user-scoped app data dir (auth token, not in repo)
+ *   Log files:    <project-root>/.gstack/browse-{console,network,dialog}.log
+ *   Port:         random 10000-60000 (or BROWSE_PORT env for debug override)
  */
 
 import { BrowserManager } from './browser-manager';
@@ -21,7 +22,14 @@ import { handleCookiePickerRoute } from './cookie-picker-routes';
 import { sanitizeExtensionUrl } from './sidebar-utils';
 import { COMMAND_DESCRIPTIONS, PAGE_CONTENT_COMMANDS, wrapUntrustedContent } from './commands';
 import { handleSnapshot, SNAPSHOT_FLAGS } from './snapshot';
-import { resolveConfig, ensureStateDir, readVersionHash } from './config';
+import {
+  resolveConfig,
+  ensureStateDir,
+  ensureUserStateDir,
+  readVersionHash,
+  createPublicState,
+  type BrowseSecretState,
+} from './config';
 import { emitActivity, subscribe, getActivityAfter, getActivityHistory, getSubscriberCount } from './activity';
 // Bun.spawn used instead of child_process.spawn (compiled bun binaries
 // fail posix_spawn on all executables including /bin/bash)
@@ -33,12 +41,67 @@ import * as crypto from 'crypto';
 // ─── Config ─────────────────────────────────────────────────────
 const config = resolveConfig();
 ensureStateDir(config);
+ensureUserStateDir(config);
 
 // ─── Auth ───────────────────────────────────────────────────────
-const AUTH_TOKEN = crypto.randomUUID();
 const BROWSE_PORT = parseInt(process.env.BROWSE_PORT || '0', 10);
 const IDLE_TIMEOUT_MS = parseInt(process.env.BROWSE_IDLE_TIMEOUT || '1800000', 10); // 30 min
 // Sidebar chat is always enabled in headed mode (ungated in v0.12.0)
+
+function readSecretState(): BrowseSecretState | null {
+  try {
+    const raw = fs.readFileSync(config.secretStateFile, 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<BrowseSecretState> & { token?: unknown };
+    if (typeof parsed.token !== 'string' || parsed.token.length === 0) return null;
+    return {
+      token: parsed.token,
+      createdAt: typeof parsed.createdAt === 'string' && parsed.createdAt.length > 0
+        ? parsed.createdAt
+        : new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readLegacyToken(): string | null {
+  try {
+    const raw = fs.readFileSync(config.stateFile, 'utf-8');
+    const parsed = JSON.parse(raw) as { token?: unknown };
+    return typeof parsed.token === 'string' && parsed.token.length > 0 ? parsed.token : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSecretState(state: BrowseSecretState): void {
+  const tmpFile = `${config.secretStateFile}.tmp`;
+  fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2), { mode: 0o600 });
+  fs.renameSync(tmpFile, config.secretStateFile);
+}
+
+function loadOrCreateAuthToken(): string {
+  const existing = readSecretState();
+  if (existing) return existing.token;
+
+  const legacyToken = readLegacyToken();
+  if (legacyToken) {
+    writeSecretState({
+      token: legacyToken,
+      createdAt: new Date().toISOString(),
+    });
+    return legacyToken;
+  }
+
+  const token = crypto.randomUUID();
+  writeSecretState({
+    token,
+    createdAt: new Date().toISOString(),
+  });
+  return token;
+}
+
+const AUTH_TOKEN = loadOrCreateAuthToken();
 
 function validateAuth(req: Request): boolean {
   const header = req.headers.get('authorization');
@@ -842,7 +905,17 @@ async function start() {
   }
 
   const startTime = Date.now();
-  const server = Bun.serve({
+  const state = {
+    ...createPublicState(config, {
+      pid: process.pid,
+      port,
+      startedAt: new Date().toISOString(),
+      serverPath: path.resolve(import.meta.dir, 'server.ts'),
+      binaryVersion: readVersionHash() || undefined,
+    }),
+    mode: browserManager.getConnectionMode(),
+  };
+  Bun.serve({
     port,
     hostname: '127.0.0.1',
     fetch: async (req) => {
@@ -1167,15 +1240,6 @@ async function start() {
   });
 
   // Write state file (atomic: write .tmp then rename)
-  const state: Record<string, unknown> = {
-    pid: process.pid,
-    port,
-    token: AUTH_TOKEN,
-    startedAt: new Date().toISOString(),
-    serverPath: path.resolve(import.meta.dir, 'server.ts'),
-    binaryVersion: readVersionHash() || undefined,
-    mode: browserManager.getConnectionMode(),
-  };
   const tmpFile = config.stateFile + '.tmp';
   fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2), { mode: 0o600 });
   fs.renameSync(tmpFile, config.stateFile);

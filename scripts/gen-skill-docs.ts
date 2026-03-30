@@ -94,13 +94,18 @@ function externalSkillName(skillDir: string, frontmatterName?: string): string {
   return `gstack-${baseName}`;
 }
 
+function normalizeLineEndings(content: string): string {
+  return content.replace(/\r\n/g, '\n');
+}
+
 function extractNameAndDescription(content: string): { name: string; description: string } {
-  const fmStart = content.indexOf('---\n');
+  const normalized = normalizeLineEndings(content);
+  const fmStart = normalized.indexOf('---\n');
   if (fmStart !== 0) return { name: '', description: '' };
-  const fmEnd = content.indexOf('\n---', fmStart + 4);
+  const fmEnd = normalized.indexOf('\n---', fmStart + 4);
   if (fmEnd === -1) return { name: '', description: '' };
 
-  const frontmatter = content.slice(fmStart + 4, fmEnd);
+  const frontmatter = normalized.slice(fmStart + 4, fmEnd);
   const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
   const name = nameMatch ? nameMatch[1].trim() : '';
 
@@ -137,6 +142,7 @@ const OPENAI_SHORT_DESCRIPTION_LIMIT = 120;
 function condenseOpenAIShortDescription(description: string): string {
   const firstParagraph = description.split(/\n\s*\n/)[0] || description;
   const collapsed = firstParagraph.replace(/\s+/g, ' ').trim();
+  if (!collapsed) return '';
   if (collapsed.length <= OPENAI_SHORT_DESCRIPTION_LIMIT) return collapsed;
 
   const truncated = collapsed.slice(0, OPENAI_SHORT_DESCRIPTION_LIMIT - 3);
@@ -146,9 +152,10 @@ function condenseOpenAIShortDescription(description: string): string {
 }
 
 function generateOpenAIYaml(displayName: string, shortDescription: string): string {
+  const effectiveShortDescription = shortDescription.trim() || `Use ${displayName} for this task.`;
   return `interface:
   display_name: ${JSON.stringify(displayName)}
-  short_description: ${JSON.stringify(shortDescription)}
+  short_description: ${JSON.stringify(effectiveShortDescription)}
   default_prompt: ${JSON.stringify(`Use ${displayName} for this task.`)}
 policy:
   allow_implicit_invocation: true
@@ -167,13 +174,15 @@ function transformFrontmatter(content: string, host: Host): string {
     return content.replace(/^sensitive:\s*true\n/m, '');
   }
 
-  const fmStart = content.indexOf('---\n');
+  const normalized = normalizeLineEndings(content);
+  const newline = content.includes('\r\n') ? '\r\n' : '\n';
+  const fmStart = normalized.indexOf('---\n');
   if (fmStart !== 0) return content;
-  const fmEnd = content.indexOf('\n---', fmStart + 4);
+  const fmEnd = normalized.indexOf('\n---', fmStart + 4);
   if (fmEnd === -1) return content;
-  const frontmatter = content.slice(fmStart + 4, fmEnd);
-  const body = content.slice(fmEnd + 4); // includes the leading \n after ---
-  const { name, description } = extractNameAndDescription(content);
+  const frontmatter = normalized.slice(fmStart + 4, fmEnd);
+  const body = normalized.slice(fmEnd + 4); // includes the leading \n after ---
+  const { name, description } = extractNameAndDescription(normalized);
 
   if (host === 'codex') {
     // Codex 1024-char description limit — fail build, don't ship broken skills
@@ -185,7 +194,7 @@ function transformFrontmatter(content: string, host: Host): string {
       );
     }
     const indentedDesc = description.split('\n').map(l => `  ${l}`).join('\n');
-    return `---\nname: ${name}\ndescription: |\n${indentedDesc}\n---` + body;
+    return (`---\nname: ${name}\ndescription: |\n${indentedDesc}\n---` + body).replace(/\n/g, newline);
   }
 
   if (host === 'factory') {
@@ -194,7 +203,7 @@ function transformFrontmatter(content: string, host: Host): string {
     let fm = `---\nname: ${name}\ndescription: |\n${indentedDesc}\nuser-invocable: true\n`;
     if (sensitive) fm += `disable-model-invocation: true\n`;
     fm += '---';
-    return fm + body;
+    return (fm + body).replace(/\n/g, newline);
   }
 
   return content; // unknown host: passthrough
@@ -297,7 +306,12 @@ function processExternalHost(
   // Replace hardcoded Claude paths with host-appropriate paths
   result = result.replace(/~\/\.claude\/skills\/gstack/g, ctx.paths.skillRoot);
   result = result.replace(/\.claude\/skills\/gstack/g, ctx.paths.localSkillRoot);
-  result = result.replace(/\.claude\/skills\/review/g, `${config.hostSubdir}/skills/gstack/review`);
+  result = result.replace(/~\/\.claude\/plans/g, host === 'codex' ? '~/.codex/plans' : '~/.claude/plans');
+  result = result.replace(/\.claude\/plans/g, host === 'codex' ? '.codex/plans' : '.claude/plans');
+  result = result.replace(
+    /\.claude\/skills\/review/g,
+    host === 'codex' ? `${ctx.paths.skillRoot}/review` : `${config.hostSubdir}/skills/gstack/review`,
+  );
   result = result.replace(/\.claude\/skills/g, `${config.hostSubdir}/skills`);
 
   // Factory-only: translate Claude Code tool names to generic phrasing
@@ -314,7 +328,7 @@ function processExternalHost(
   if (config.generateMetadata && !symlinkLoop) {
     const agentsDir = path.join(outputDir, 'agents');
     fs.mkdirSync(agentsDir, { recursive: true });
-    const shortDescription = condenseOpenAIShortDescription(extractedDescription);
+    const shortDescription = condenseOpenAIShortDescription(extractedDescription || frontmatterName || name);
     fs.writeFileSync(path.join(agentsDir, 'openai.yaml'), generateOpenAIYaml(name, shortDescription));
   }
 

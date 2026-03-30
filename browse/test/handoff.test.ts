@@ -189,7 +189,10 @@ describe('handoff integration', () => {
       // Verify cookies survived
       const { handleReadCommand } = await import('../src/read-commands');
       const cookiesResult = await handleReadCommand('cookies', [], hbm);
-      expect(cookiesResult).toContain('handoff_test');
+      const summary = JSON.parse(cookiesResult);
+      const cookie = summary.cookies.find((entry: any) => entry.name === 'handoff_test');
+      expect(cookie).toBeDefined();
+      expect(cookie.value).toMatch(/REDACTED/);
 
       // Verify commands still work
       const text = await handleReadCommand('text', [], hbm);

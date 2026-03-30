@@ -442,6 +442,8 @@ If `NEEDS_SETUP`:
    fi
    ```
 
+On Windows, the supported no-WSL runtime requires both `browse.exe` and `browse/dist/server-node.mjs`.
+
 ## Step 0: Detect platform and base branch
 
 First, detect the git hosting platform from the remote URL:

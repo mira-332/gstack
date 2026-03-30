@@ -262,6 +262,18 @@ fi
 # 3. Ensure ~/.gstack global state directory exists
 mkdir -p "$HOME/.gstack/projects"
 
+pin_browse_runtime_trust() {
+  echo "Pinning browse runtime trust..."
+  (
+    cd "$SOURCE_GSTACK_DIR"
+    bun run browse/scripts/write-runtime-trust.ts \
+      --runtime-dir "$SOURCE_GSTACK_DIR/browse/dist" \
+      --output "$HOME/.gstack/trust/gstack-browse-runtime.json"
+  )
+}
+
+pin_browse_runtime_trust
+
 # ─── Helper: link Claude skill subdirectories into a skills parent directory ──
 # When SKILL_PREFIX=1 (default), symlinks are prefixed with "gstack-" to avoid
 # namespace pollution (e.g., gstack-review instead of review).
@@ -390,6 +402,12 @@ link_codex_skill_dirs() {
       # symlink that Step 5 already pointed at the repo root.
       [ "$skill_name" = "gstack" ] && continue
       target="$skills_dir/$skill_name"
+      # Older installs left real directories here, which preserves stale
+      # agents/openai.yaml metadata and keeps Codex warnings alive. Replace
+      # those managed directories with fresh symlinks to the generated skills.
+      if [ -e "$target" ] && [ ! -L "$target" ]; then
+        rm -rf "$target"
+      fi
       # Create or update symlink
       if [ -L "$target" ] || [ ! -e "$target" ]; then
         ln -snf "$skill_dir" "$target"
@@ -405,7 +423,7 @@ link_codex_skill_dirs() {
 # ─── Helper: create .agents/skills/gstack/ sidecar symlinks ──────────
 # Codex/Gemini/Cursor read skills from .agents/skills/. We link runtime
 # assets (bin/, browse/dist/, review/, qa/, etc.) so skill templates can
-# resolve paths like $SKILL_ROOT/review/design-checklist.md.
+# resolve paths like $GSTACK_ROOT/review/design-checklist.md.
 create_agents_sidecar() {
   local repo_root="$1"
   local agents_gstack="$repo_root/.agents/skills/gstack"

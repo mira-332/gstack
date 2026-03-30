@@ -26,6 +26,13 @@ All selector arguments accept CSS selectors, `@e` refs after `snapshot`, or `@c`
 
 gstack's browser is a compiled CLI binary that talks to a persistent local Chromium daemon over HTTP. The CLI is a thin client — it reads a state file, sends a command, and prints the response to stdout. The server does the real work via [Playwright](https://playwright.dev/).
 
+On Windows, the supported production path is:
+
+- `browse.exe` as the thin client
+- `browse/dist/server-node.mjs` as the long-lived server
+- PowerShell for runtime operations
+- no WSL required
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Claude Code                                                    │
@@ -48,7 +55,7 @@ gstack's browser is a compiled CLI binary that talks to a persistent local Chrom
 
 ### Lifecycle
 
-1. **First call**: CLI checks `.gstack/browse.json` (in the project root) for a running server. None found — it spawns `bun run browse/src/server.ts` in the background. The server launches headless Chromium via Playwright, picks a random port (10000-60000), generates a bearer token, writes the state file, and starts accepting HTTP requests. This takes ~3 seconds.
+1. **First call**: CLI checks `.gstack/browse.json` (in the project root) for a running server. None found — it starts the server in the background. On macOS/Linux this is `bun run browse/src/server.ts`; on Windows it is `node browse/dist/server-node.mjs`. The server launches headless Chromium via Playwright, picks a random port (10000-60000), generates a bearer token, writes the state file, and starts accepting HTTP requests. This takes ~3 seconds on macOS/Linux and longer on Windows cold start.
 
 2. **Subsequent calls**: CLI reads the state file, sends an HTTP POST with the bearer token, prints the response. ~100-200ms round trip.
 
@@ -328,6 +335,7 @@ The browser automation layer is built on [Playwright](https://playwright.dev/) b
 
 - [Bun](https://bun.sh/) v1.0+
 - Playwright's Chromium (installed automatically by `bun install`)
+- [Node.js](https://nodejs.org/) on Windows
 
 ### Quick start
 
@@ -373,7 +381,7 @@ Tests spin up a local HTTP server (`browse/test/test-server.ts`) serving HTML fi
 | `browse/src/read-commands.ts` | Non-mutating commands: `text`, `html`, `links`, `js`, `css`, `is`, `dialog`, `forms`, etc. Exports `getCleanText()`. |
 | `browse/src/write-commands.ts` | Mutating commands: `goto`, `click`, `fill`, `upload`, `dialog-accept`, `useragent` (with context recreation), etc. |
 | `browse/src/meta-commands.ts` | Server management, chain routing, diff (DRY via `getCleanText`), snapshot delegation. |
-| `browse/src/cookie-import-browser.ts` | Decrypt Chromium cookies from macOS and Linux browser profiles using platform-specific safe-storage key lookup. Auto-detects installed browsers. |
+| `browse/src/cookie-import-browser.ts` | Decrypt Chromium cookies from macOS and Linux browser profiles using platform-specific safe-storage key lookup. Windows DPAPI import is not implemented yet, so Windows flows use manual login, cookie files, or `handoff`. |
 | `browse/src/cookie-picker-routes.ts` | HTTP routes for `/cookie-picker/*` — browser list, domain search, import, remove. |
 | `browse/src/cookie-picker-ui.ts` | Self-contained HTML generator for the interactive cookie picker (dark theme, no frameworks). |
 | `browse/src/activity.ts` | Activity streaming — `ActivityEntry` type, `CircularBuffer`, privacy filtering, SSE subscriber management. |

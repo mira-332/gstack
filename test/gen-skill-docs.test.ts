@@ -6,12 +6,14 @@ import * as path from 'path';
 import * as os from 'os';
 
 const ROOT = path.resolve(import.meta.dir, '..');
+const BUN = process.execPath;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
 
 function extractDescription(content: string): string {
-  const fmEnd = content.indexOf('\n---', 4);
+  const frontmatterStart = content.startsWith('---\r\n') ? 5 : 4;
+  const fmEnd = content.indexOf('\n---', frontmatterStart);
   expect(fmEnd).toBeGreaterThan(0);
-  const frontmatter = content.slice(4, fmEnd);
+  const frontmatter = content.slice(frontmatterStart, fmEnd).replace(/\r\n/g, '\n');
   const lines = frontmatter.split('\n');
   let description = '';
   let inDescription = false;
@@ -126,7 +128,7 @@ describe('gen-skill-docs', () => {
   test('every generated SKILL.md has valid YAML frontmatter', () => {
     for (const skill of ALL_SKILLS) {
       const content = fs.readFileSync(path.join(ROOT, skill.dir, 'SKILL.md'), 'utf-8');
-      expect(content.startsWith('---\n')).toBe(true);
+      expect(content.startsWith('---\n') || content.startsWith('---\r\n')).toBe(true);
       expect(content).toContain('name:');
       expect(content).toContain('description:');
     }
@@ -178,13 +180,13 @@ describe('gen-skill-docs', () => {
   });
 
   test('generated files are fresh (match --dry-run)', () => {
-    const result = Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--dry-run'], {
+    const result = Bun.spawnSync([BUN, 'run', 'scripts/gen-skill-docs.ts', '--dry-run'], {
       cwd: ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
     });
     expect(result.exitCode).toBe(0);
-    const output = result.stdout.toString();
+    const output = result.stdout.toString().replace(/\\/g, '/');
     // Every skill should be FRESH
     for (const skill of ALL_SKILLS) {
       const file = skill.dir === '.' ? 'SKILL.md' : `${skill.dir}/SKILL.md`;
@@ -1405,7 +1407,7 @@ describe('Codex generation (--host codex)', () => {
   const AGENTS_DIR = path.join(ROOT, '.agents', 'skills');
 
   // .agents/ is gitignored (v0.11.2.0) — generate on demand for tests
-  Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex'], {
+  Bun.spawnSync([BUN, 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex'], {
     cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
   });
 
@@ -1467,10 +1469,11 @@ describe('Codex generation (--host codex)', () => {
   test('Codex frontmatter has ONLY name + description', () => {
     for (const skill of CODEX_SKILLS) {
       const content = fs.readFileSync(path.join(AGENTS_DIR, skill.codexName, 'SKILL.md'), 'utf-8');
-      expect(content.startsWith('---\n')).toBe(true);
-      const fmEnd = content.indexOf('\n---', 4);
+      const frontmatterStart = content.startsWith('---\r\n') ? 5 : 4;
+      expect(frontmatterStart === 4 || frontmatterStart === 5).toBe(true);
+      const fmEnd = content.indexOf('\n---', frontmatterStart);
       expect(fmEnd).toBeGreaterThan(0);
-      const frontmatter = content.slice(4, fmEnd);
+      const frontmatter = content.slice(frontmatterStart, fmEnd);
       // Must have name and description
       expect(frontmatter).toContain('name:');
       expect(frontmatter).toContain('description:');
@@ -1488,6 +1491,7 @@ describe('Codex generation (--host codex)', () => {
       const content = fs.readFileSync(metadata, 'utf-8');
       expect(content).toContain(`display_name: "${skill.codexName}"`);
       expect(content).toContain('short_description:');
+      expect(content).not.toContain('short_description: ""');
       expect(content).toContain('allow_implicit_invocation: true');
     }
   });
@@ -1522,13 +1526,13 @@ describe('Codex generation (--host codex)', () => {
   });
 
   test('--host codex --dry-run freshness', () => {
-    const result = Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex', '--dry-run'], {
+    const result = Bun.spawnSync([BUN, 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex', '--dry-run'], {
       cwd: ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
     });
     expect(result.exitCode).toBe(0);
-    const output = result.stdout.toString();
+    const output = result.stdout.toString().replace(/\\/g, '/');
     // Every Codex skill should be FRESH
     for (const skill of CODEX_SKILLS) {
       expect(output).toContain(`FRESH: .agents/skills/${skill.codexName}/SKILL.md`);
@@ -1537,12 +1541,12 @@ describe('Codex generation (--host codex)', () => {
   });
 
   test('--host agents alias produces same output as --host codex', () => {
-    const codexResult = Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex', '--dry-run'], {
+    const codexResult = Bun.spawnSync([BUN, 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex', '--dry-run'], {
       cwd: ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
     });
-    const agentsResult = Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'agents', '--dry-run'], {
+    const agentsResult = Bun.spawnSync([BUN, 'run', 'scripts/gen-skill-docs.ts', '--host', 'agents', '--dry-run'], {
       cwd: ROOT,
       stdout: 'pipe',
       stderr: 'pipe',
@@ -1556,8 +1560,9 @@ describe('Codex generation (--host codex)', () => {
   test('multiline descriptions preserved in Codex output', () => {
     // office-hours has a multiline description — verify it survives the frontmatter transform
     const content = fs.readFileSync(path.join(AGENTS_DIR, 'gstack-office-hours', 'SKILL.md'), 'utf-8');
-    const fmEnd = content.indexOf('\n---', 4);
-    const frontmatter = content.slice(4, fmEnd);
+    const frontmatterStart = content.startsWith('---\r\n') ? 5 : 4;
+    const fmEnd = content.indexOf('\n---', frontmatterStart);
+    const frontmatter = content.slice(frontmatterStart, fmEnd);
     // Description should span multiple lines (block scalar)
     const descLines = frontmatter.split('\n').filter(l => l.startsWith('  '));
     expect(descLines.length).toBeGreaterThan(1);
@@ -1572,8 +1577,9 @@ describe('Codex generation (--host codex)', () => {
       // Must have safety advisory prose
       expect(content).toContain('Safety Advisory');
       // Must NOT have hooks: in frontmatter
-      const fmEnd = content.indexOf('\n---', 4);
-      const frontmatter = content.slice(4, fmEnd);
+      const frontmatterStart = content.startsWith('---\r\n') ? 5 : 4;
+      const fmEnd = content.indexOf('\n---', frontmatterStart);
+      const frontmatter = content.slice(frontmatterStart, fmEnd);
       expect(frontmatter).not.toContain('hooks:');
     }
   });
@@ -1598,14 +1604,14 @@ describe('Codex generation (--host codex)', () => {
 
   // ─── Path rewriting regression tests ─────────────────────────
 
-  test('sidecar paths point to .agents/skills/gstack/review/ (not gstack-review/)', () => {
-    // Regression: gen-skill-docs rewrote .claude/skills/review → .agents/skills/gstack-review
-    // but setup puts sidecars under .agents/skills/gstack/review/. Must match setup layout.
+  test('sidecar paths point to $GSTACK_ROOT/review/ (not gstack-review/)', () => {
+    // Regression: Codex review assets must resolve through the shared runtime root.
     const content = fs.readFileSync(path.join(AGENTS_DIR, 'gstack-review', 'SKILL.md'), 'utf-8');
-    // Correct: references to sidecar files use gstack/review/ path
-    expect(content).toContain('.agents/skills/gstack/review/checklist.md');
-    expect(content).toContain('.agents/skills/gstack/review/design-checklist.md');
-    // Wrong: must NOT reference gstack-review/checklist.md (file doesn't exist there)
+    // Correct: references to sidecar files use the runtime root.
+    expect(content).toContain('$GSTACK_ROOT/review/checklist.md');
+    expect(content).toContain('$GSTACK_ROOT/review/design-checklist.md');
+    expect(content).toContain('$GSTACK_ROOT/review/greptile-triage.md');
+    // Wrong: must NOT reference the generated skill directory directly.
     expect(content).not.toContain('.agents/skills/gstack-review/checklist.md');
     expect(content).not.toContain('.agents/skills/gstack-review/design-checklist.md');
   });
@@ -1614,7 +1620,7 @@ describe('Codex generation (--host codex)', () => {
     const content = fs.readFileSync(path.join(AGENTS_DIR, 'gstack-ship', 'SKILL.md'), 'utf-8');
     // Ship references the review checklist in its pre-landing review step
     if (content.includes('checklist.md')) {
-      expect(content).toContain('.agents/skills/gstack/review/');
+      expect(content).toContain('$GSTACK_ROOT/review/');
       expect(content).not.toContain('.agents/skills/gstack-review/checklist');
     }
   });
@@ -1622,7 +1628,7 @@ describe('Codex generation (--host codex)', () => {
   test('greptile-triage sidecar path is correct', () => {
     const content = fs.readFileSync(path.join(AGENTS_DIR, 'gstack-review', 'SKILL.md'), 'utf-8');
     if (content.includes('greptile-triage')) {
-      expect(content).toContain('.agents/skills/gstack/review/greptile-triage.md');
+      expect(content).toContain('$GSTACK_ROOT/review/greptile-triage.md');
       expect(content).not.toContain('.agents/skills/gstack-review/greptile-triage');
     }
   });
@@ -1638,8 +1644,9 @@ describe('Codex generation (--host codex)', () => {
     // Rule 2: .claude/skills/gstack → .agents/skills/gstack
     expect(content).not.toContain('.claude/skills/gstack');
 
-    // Rule 3: .claude/skills/review → .agents/skills/gstack/review
+    // Rule 3: .claude/skills/review → $GSTACK_ROOT/review
     expect(content).not.toContain('.claude/skills/review');
+    expect(content).toContain('$GSTACK_ROOT/review');
 
     // Rule 4: .claude/skills → .agents/skills (catch-all)
     expect(content).not.toContain('.claude/skills');
@@ -1658,8 +1665,16 @@ describe('Codex generation (--host codex)', () => {
       // If a skill references checklist.md, it must use the correct sidecar path
       if (content.includes('checklist.md') && !content.includes('design-checklist.md')) {
         expect(content).not.toContain('gstack-review/checklist.md');
+        expect(content).toContain('$GSTACK_ROOT/review/');
       }
     }
+  });
+
+  test('setup exposes review sidecars under the shared Codex runtime root', () => {
+    const setupScript = fs.readFileSync(path.join(ROOT, 'setup'), 'utf-8');
+    expect(setupScript).toContain('mkdir -p "$codex_gstack" "$codex_gstack/browse" "$codex_gstack/gstack-upgrade" "$codex_gstack/review"');
+    expect(setupScript).toContain('for f in checklist.md design-checklist.md greptile-triage.md TODOS-format.md; do');
+    expect(setupScript).toContain('ln -snf "$gstack_dir/review/$f" "$codex_gstack/review/$f"');
   });
 
   // ─── Claude output regression guard ─────────────────────────
@@ -1926,6 +1941,14 @@ describe('setup script validation', () => {
     expect(fnBody).toContain('gstack*');
   });
 
+  test('link_codex_skill_dirs replaces stale real skill directories from older installs', () => {
+    const fnStart = setupContent.indexOf('link_codex_skill_dirs()');
+    const fnEnd = setupContent.indexOf('}', setupContent.indexOf('linked[@]}', fnStart));
+    const fnBody = setupContent.slice(fnStart, fnEnd);
+    expect(fnBody).toContain('if [ -e "$target" ] && [ ! -L "$target" ]; then');
+    expect(fnBody).toContain('rm -rf "$target"');
+  });
+
   test('link_claude_skill_dirs creates relative symlinks', () => {
     // Claude links should be relative: ln -snf "gstack/$dir_name"
     // Uses dir_name (not skill_name) because symlink target must point to the physical directory
@@ -1961,6 +1984,21 @@ describe('setup script validation', () => {
     const content = fs.readFileSync(path.join(codexSkillDir, 'SKILL.md'), 'utf-8');
     expect(content).toContain('GSTACK_ROOT=');
     expect(content).toContain('$GSTACK_BIN/');
+  });
+
+  test('generated Codex browse and qa skills prefer the local gstack browser runtime', () => {
+    const browseSkill = path.join(ROOT, '.agents', 'skills', 'gstack-browse', 'SKILL.md');
+    const qaSkill = path.join(ROOT, '.agents', 'skills', 'gstack-qa', 'SKILL.md');
+    if (!fs.existsSync(browseSkill) || !fs.existsSync(qaSkill)) return;
+
+    const browseContent = fs.readFileSync(browseSkill, 'utf-8');
+    const qaContent = fs.readFileSync(qaSkill, 'utf-8');
+
+    expect(browseContent).toContain('browse.exe');
+    expect(qaContent).toContain('browse.exe');
+    expect(browseContent).toContain('Do **not** substitute host-native MCP or Playwright browser tools');
+    expect(qaContent).toContain('Do **not** substitute host-native MCP or Playwright browser tools');
+    expect(qaContent).toContain('server-node.mjs');
   });
 
   // T3: Kiro host support in setup script

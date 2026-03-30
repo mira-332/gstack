@@ -40,7 +40,7 @@ Fork it. Improve it. Make it yours. And if you want to hate on free open source 
 
 ## Install — 30 seconds
 
-**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Git](https://git-scm.com/), [Bun](https://bun.sh/) v1.0+, [Node.js](https://nodejs.org/) (Windows only)
+**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or another SKILL.md host, [Git](https://git-scm.com/), [Bun](https://bun.sh/) v1.0+, [Node.js](https://nodejs.org/) (required on Windows)
 
 ### Step 1: Install on your machine
 
@@ -247,7 +247,7 @@ I open sourced how I build software. You can fork it and make it your own.
 |-----|---------------|
 | [Skill Deep Dives](docs/skills.md) | Philosophy, examples, and workflow for every skill (includes Greptile integration) |
 | [Builder Ethos](ETHOS.md) | Builder philosophy: Boil the Lake, Search Before Building, three layers of knowledge |
-| [Architecture](ARCHITECTURE.md) | Design decisions and system internals |
+| [Architecture](ARCHITECTURE.md) | Windows-first local runtime, production verification gates, and system internals |
 | [Browser Reference](BROWSER.md) | Full command reference for `/browse` |
 | [Contributing](CONTRIBUTING.md) | Dev setup, testing, contributor mode, and dev mode |
 | [Changelog](CHANGELOG.md) | What's new in every version |
@@ -280,7 +280,7 @@ Data is stored in [Supabase](https://supabase.com) (open source Firebase alterna
 
 **Codex says "Skipped loading skill(s) due to invalid SKILL.md"?** Your Codex skill descriptions are stale. Fix: `cd ~/.codex/skills/gstack && git pull && ./setup --host codex` — or for repo-local installs: `cd "$(readlink -f .agents/skills/gstack)" && git pull && ./setup --host codex`
 
-**Windows users:** gstack works on Windows 11 via Git Bash or WSL. Node.js is required in addition to Bun — Bun has a known bug with Playwright's pipe transport on Windows ([bun#4253](https://github.com/oven-sh/bun/issues/4253)). The browse server automatically falls back to Node.js. Make sure both `bun` and `node` are on your PATH.
+**Windows users:** gstack is intended to run on Windows 11 without WSL. Use PowerShell for runtime and Git Bash for `./setup` or bash-based build helpers. Node.js is required in addition to Bun because the supported Windows browse path runs the long-lived Playwright server through Node.js ([bun#4253](https://github.com/oven-sh/bun/issues/4253)). Make sure `bun`, `node`, and Git for Windows are on your PATH. See [ARCHITECTURE.md](ARCHITECTURE.md) for the Windows-first local runtime and production verification gate.
 
 **Claude says it can't see the skills?** Make sure your project's `CLAUDE.md` has a gstack section. Add this:
 

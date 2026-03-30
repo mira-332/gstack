@@ -77,7 +77,7 @@ export const COMMAND_DESCRIPTIONS: Record<string, { category: string; descriptio
   'console': { category: 'Inspection', description: 'Console messages (--errors filters to error/warning)', usage: 'console [--clear|--errors]' },
   'network': { category: 'Inspection', description: 'Network requests', usage: 'network [--clear]' },
   'dialog':  { category: 'Inspection', description: 'Dialog messages', usage: 'dialog [--clear]' },
-  'cookies': { category: 'Inspection', description: 'All cookies as JSON' },
+  'cookies': { category: 'Inspection', description: 'Redacted cookie summary as JSON (--raw reveals full values)', usage: 'cookies [--raw]' },
   'storage': { category: 'Inspection', description: 'Read all localStorage + sessionStorage as JSON, or set <key> <value> to write localStorage', usage: 'storage [set k v]' },
   'perf':    { category: 'Inspection', description: 'Page load timings' },
   // Interaction

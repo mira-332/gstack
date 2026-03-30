@@ -334,14 +334,23 @@ State persists between calls (cookies, tabs, login sessions).
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/gstack/browse/dist/browse
-if [ -x "$B" ]; then
+[ -n "$_ROOT" ] && [ -f "$_ROOT/.claude/skills/gstack/browse/dist/browse.exe" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse.exe"
+[ -z "$B" ] && [ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -z "$B" ] && [ -f "~/.claude/skills/gstack/browse/dist/browse.exe" ] && B="~/.claude/skills/gstack/browse/dist/browse.exe"
+[ -z "$B" ] && [ -x "~/.claude/skills/gstack/browse/dist/browse" ] && B="~/.claude/skills/gstack/browse/dist/browse"
+if [ -n "$B" ] && [ -e "$B" ]; then
   echo "READY: $B"
 else
   echo "NEEDS_SETUP"
 fi
 ```
+
+If `READY`: use `$B` for every browser action in this workflow.
+On Codex, the local gstack browse runtime is the source of truth for browser state.
+Do **not** substitute host-native MCP or Playwright browser tools for `$B`.
+Mixing control planes breaks session continuity, hides gstack-specific bugs, and invalidates Windows verification.
+If the first `$B` command fails or times out, do **not** start debugging gstack internals unless the user explicitly asked to debug gstack itself.
+Stop, report the runtime failure clearly, and preserve the verification boundary.
 
 If `NEEDS_SETUP`:
 1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
@@ -364,6 +373,8 @@ If `NEEDS_SETUP`:
      rm "$tmpfile"
    fi
    ```
+
+On Windows, the supported no-WSL runtime requires both `browse.exe` and `browse/dist/server-node.mjs`.
 
 ## Core QA Patterns
 
@@ -565,7 +576,7 @@ Refs are invalidated on navigation — run `snapshot` again after `goto`.
 |---------|-------------|
 | `attrs <sel|@ref>` | Element attributes as JSON |
 | `console [--clear|--errors]` | Console messages (--errors filters to error/warning) |
-| `cookies` | All cookies as JSON |
+| `cookies [--raw]` | Redacted cookie summary as JSON (--raw reveals full values) |
 | `css <sel> <prop>` | Computed CSS value |
 | `dialog [--clear]` | Dialog messages |
 | `eval <file>` | Run JavaScript from file and return result as string (path must be under /tmp or cwd) |

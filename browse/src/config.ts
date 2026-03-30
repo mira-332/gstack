@@ -11,15 +11,32 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 export interface BrowseConfig {
   projectDir: string;
   stateDir: string;
   stateFile: string;
+  userStateDir: string;
+  secretStateFile: string;
   consoleLog: string;
   networkLog: string;
   dialogLog: string;
+}
+
+export interface BrowsePublicState {
+  pid: number;
+  port: number;
+  startedAt: string;
+  serverPath: string;
+  binaryVersion?: string;
+  secretStateFile: string;
+}
+
+export interface BrowseSecretState {
+  token: string;
+  createdAt: string;
 }
 
 /**
@@ -37,6 +54,26 @@ export function getGitRoot(): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve the user-scoped runtime state directory used for secret-bearing data.
+ *
+ * On Windows this maps to LOCALAPPDATA by default. On Unix-like systems it uses
+ * XDG_STATE_HOME when available, otherwise ~/.local/state.
+ */
+export function resolveUserStateDir(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  if (env.BROWSE_USER_STATE_DIR) {
+    return path.resolve(env.BROWSE_USER_STATE_DIR);
+  }
+
+  const baseDir = process.platform === 'win32'
+    ? (env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'))
+    : (env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'));
+
+  return path.join(baseDir, 'gstack', 'browse');
 }
 
 /**
@@ -63,13 +100,49 @@ export function resolveConfig(
     stateFile = path.join(stateDir, 'browse.json');
   }
 
+  const userStateDir = resolveUserStateDir(env);
+  const secretStateFile = path.join(userStateDir, 'browse-auth.json');
+
   return {
     projectDir,
     stateDir,
     stateFile,
+    userStateDir,
+    secretStateFile,
     consoleLog: path.join(stateDir, 'browse-console.log'),
     networkLog: path.join(stateDir, 'browse-network.log'),
     dialogLog: path.join(stateDir, 'browse-dialog.log'),
+  };
+}
+
+/**
+ * Create the user-scoped secret state directory.
+ */
+export function ensureUserStateDir(config: BrowseConfig): void {
+  try {
+    fs.mkdirSync(config.userStateDir, { recursive: true });
+  } catch (err: any) {
+    if (err.code === 'EACCES') {
+      throw new Error(`Cannot create user state directory ${config.userStateDir}: permission denied`);
+    }
+    if (err.code === 'ENOTDIR') {
+      throw new Error(`Cannot create user state directory ${config.userStateDir}: a file exists at that path`);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Build the public state payload written into the repo-local .gstack file.
+ * Secret-bearing fields are intentionally excluded.
+ */
+export function createPublicState(
+  config: BrowseConfig,
+  state: Omit<BrowsePublicState, 'secretStateFile'>,
+): BrowsePublicState {
+  return {
+    ...state,
+    secretStateFile: config.secretStateFile,
   };
 }
 

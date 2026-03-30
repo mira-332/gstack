@@ -12,9 +12,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveConfig, ensureStateDir, readVersionHash } from './config';
+import { resolveDefaultTrustFile, verifyRuntimeTrust } from './runtime-trust';
 
 const config = resolveConfig();
 const IS_WINDOWS = process.platform === 'win32';
+const EXEC_BASENAME = path.basename(process.execPath).toLowerCase();
+const IS_COMPILED_BROWSE = EXEC_BASENAME === 'browse.exe' || EXEC_BASENAME === 'browse';
 const MAX_START_WAIT = IS_WINDOWS ? 15000 : (process.env.CI ? 30000 : 8000); // Node+Chromium takes longer on Windows
 
 export function resolveServerScript(
@@ -83,6 +86,19 @@ if (IS_WINDOWS && !NODE_SERVER_SCRIPT) {
   );
 }
 
+function enforceRuntimeTrustIfNeeded(): void {
+  if (!IS_WINDOWS || !IS_COMPILED_BROWSE) return;
+  if ((process.env.BROWSE_TRUST_MODE || '').toLowerCase() === 'off') return;
+
+  verifyRuntimeTrust(
+    path.dirname(process.execPath),
+    process.env.BROWSE_TRUST_FILE || resolveDefaultTrustFile(),
+    { requiredFiles: ['browse.exe', 'server-node.mjs', 'bun-polyfill.cjs', '.version'] },
+  );
+}
+
+enforceRuntimeTrustIfNeeded();
+
 interface ServerState {
   pid: number;
   port: number;
@@ -91,13 +107,59 @@ interface ServerState {
   serverPath: string;
   binaryVersion?: string;
   mode?: 'launched' | 'headed';
+  secretStateFile?: string;
 }
 
 // ─── State File ────────────────────────────────────────────────
+export function readSecretToken(secretStateFile: string): string | null {
+  try {
+    const data = JSON.parse(fs.readFileSync(secretStateFile, 'utf-8')) as { token?: unknown };
+    return typeof data.token === 'string' && data.token.length > 0 ? data.token : null;
+  } catch {
+    return null;
+  }
+}
+
+export function hydrateServerState(
+  data: Partial<ServerState> & { secretStateFile?: unknown; token?: unknown },
+  fallbackSecretStateFile: string = config.secretStateFile,
+): ServerState | null {
+  const secretStateFile = typeof data.secretStateFile === 'string' && data.secretStateFile.length > 0
+    ? data.secretStateFile
+    : fallbackSecretStateFile;
+  const token = typeof data.token === 'string' && data.token.length > 0
+    ? data.token
+    : readSecretToken(secretStateFile);
+
+  if (
+    typeof data.pid !== 'number'
+    || typeof data.port !== 'number'
+    || typeof data.startedAt !== 'string'
+    || typeof data.serverPath !== 'string'
+    || !token
+  ) {
+    return null;
+  }
+
+  return {
+    pid: data.pid,
+    port: data.port,
+    token,
+    startedAt: data.startedAt,
+    serverPath: data.serverPath,
+    binaryVersion: typeof data.binaryVersion === 'string' ? data.binaryVersion : undefined,
+    mode: data.mode === 'headed' ? 'headed' : data.mode === 'launched' ? 'launched' : undefined,
+    secretStateFile,
+  };
+}
+
 function readState(): ServerState | null {
   try {
-    const data = fs.readFileSync(config.stateFile, 'utf-8');
-    return JSON.parse(data);
+    const data = JSON.parse(fs.readFileSync(config.stateFile, 'utf-8')) as Partial<ServerState> & {
+      secretStateFile?: unknown;
+      token?: unknown;
+    };
+    return hydrateServerState(data, config.secretStateFile);
   } catch {
     return null;
   }
@@ -375,6 +437,25 @@ async function ensureServer(): Promise<ServerState> {
 }
 
 // ─── Command Dispatch ──────────────────────────────────────────
+export async function treatStopDisconnectAsSuccess(
+  command: string,
+  stateReader: () => ServerState | null = readState,
+  healthChecker: (port: number) => Promise<boolean> = isServerHealthy,
+  timeoutMs = 5000,
+): Promise<boolean> {
+  if (command !== 'stop') return false;
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const currentState = stateReader();
+    if (!currentState) return true;
+    if (!(await healthChecker(currentState.port))) return true;
+    await Bun.sleep(100);
+  }
+
+  return false;
+}
+
 async function sendCommand(state: ServerState, command: string, args: string[], retries = 0): Promise<void> {
   const body = JSON.stringify({ command, args });
 
@@ -422,6 +503,10 @@ async function sendCommand(state: ServerState, command: string, args: string[], 
     }
     // Connection error — server may have crashed
     if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET' || err.message?.includes('fetch failed')) {
+      if (await treatStopDisconnectAsSuccess(command)) {
+        process.stdout.write('Server stopped\n');
+        return;
+      }
       if (retries >= 1) throw new Error('[browse] Server crashed twice in a row — aborting');
       console.error('[browse] Server connection lost. Restarting...');
       // Kill the old server to avoid orphaned chromium processes

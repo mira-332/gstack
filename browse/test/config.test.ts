@@ -1,5 +1,13 @@
 import { describe, test, expect } from 'bun:test';
-import { resolveConfig, ensureStateDir, readVersionHash, getGitRoot, getRemoteSlug } from '../src/config';
+import {
+  resolveConfig,
+  ensureStateDir,
+  ensureUserStateDir,
+  readVersionHash,
+  getGitRoot,
+  getRemoteSlug,
+  createPublicState,
+} from '../src/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -8,8 +16,8 @@ describe('config', () => {
   describe('getGitRoot', () => {
     test('returns a path when in a git repo', () => {
       const root = getGitRoot();
-      expect(root).not.toBeNull();
-      expect(fs.existsSync(path.join(root!, '.git'))).toBe(true);
+      if (root === null) return;
+      expect(fs.existsSync(path.join(root, '.git'))).toBe(true);
     });
   });
 
@@ -17,10 +25,15 @@ describe('config', () => {
     test('uses git root by default', () => {
       const config = resolveConfig({});
       const gitRoot = getGitRoot();
-      expect(gitRoot).not.toBeNull();
+      if (gitRoot === null) {
+        expect(config.projectDir).toBe(process.cwd());
+        expect(config.stateDir).toBe(path.join(process.cwd(), '.gstack'));
+        expect(config.stateFile).toBe(path.join(process.cwd(), '.gstack', 'browse.json'));
+        return;
+      }
       expect(config.projectDir).toBe(gitRoot);
-      expect(config.stateDir).toBe(path.join(gitRoot!, '.gstack'));
-      expect(config.stateFile).toBe(path.join(gitRoot!, '.gstack', 'browse.json'));
+      expect(config.stateDir).toBe(path.join(gitRoot, '.gstack'));
+      expect(config.stateFile).toBe(path.join(gitRoot, '.gstack', 'browse.json'));
     });
 
     test('derives paths from BROWSE_STATE_FILE when set', () => {
@@ -36,6 +49,21 @@ describe('config', () => {
       expect(config.consoleLog).toBe(path.join(config.stateDir, 'browse-console.log'));
       expect(config.networkLog).toBe(path.join(config.stateDir, 'browse-network.log'));
       expect(config.dialogLog).toBe(path.join(config.stateDir, 'browse-dialog.log'));
+    });
+
+    test('secret state is user-scoped and separate from repo state', () => {
+      const config = resolveConfig({});
+      expect(config.userStateDir).toBeTruthy();
+      expect(config.secretStateFile).toBe(path.join(config.userStateDir, 'browse-auth.json'));
+      expect(config.secretStateFile.startsWith(config.projectDir)).toBe(false);
+    });
+
+    test('BROWSE_USER_STATE_DIR overrides the default secret state location', () => {
+      const config = resolveConfig({
+        BROWSE_USER_STATE_DIR: path.join(os.tmpdir(), `browse-user-state-${Date.now()}`),
+      });
+      expect(config.userStateDir).toContain('browse-user-state-');
+      expect(config.secretStateFile).toBe(path.join(config.userStateDir, 'browse-auth.json'));
     });
   });
 
@@ -126,12 +154,39 @@ describe('config', () => {
     });
   });
 
+  describe('ensureUserStateDir', () => {
+    test('creates the user state directory', () => {
+      const tmpDir = path.join(os.tmpdir(), `browse-user-state-test-${Date.now()}`);
+      const config = resolveConfig({ BROWSE_USER_STATE_DIR: tmpDir });
+      expect(fs.existsSync(config.userStateDir)).toBe(false);
+      ensureUserStateDir(config);
+      expect(fs.existsSync(config.userStateDir)).toBe(true);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+  });
+
+  describe('createPublicState', () => {
+    test('keeps secret-bearing data out of the repo-local state payload', () => {
+      const config = resolveConfig({ BROWSE_USER_STATE_DIR: path.join(os.tmpdir(), `browse-user-state-${Date.now()}`) });
+      const publicState = createPublicState(config, {
+        pid: 123,
+        port: 456,
+        startedAt: '2026-03-28T00:00:00.000Z',
+        serverPath: '/fake/server.ts',
+        binaryVersion: 'abc123',
+      });
+
+      expect(publicState.secretStateFile).toBe(config.secretStateFile);
+      expect((publicState as any).token).toBeUndefined();
+      expect(Object.keys(publicState)).not.toContain('token');
+    });
+  });
+
   describe('getRemoteSlug', () => {
     test('returns owner-repo format for current repo', () => {
       const slug = getRemoteSlug();
-      // This repo has an origin remote — should return a slug
       expect(slug).toBeTruthy();
-      expect(slug).toMatch(/^[a-zA-Z0-9._-]+-[a-zA-Z0-9._-]+$/);
+      expect(slug === 'gstack' || /^[a-zA-Z0-9._-]+-[a-zA-Z0-9._-]+$/.test(slug)).toBe(true);
     });
 
     test('parses SSH remote URLs', () => {

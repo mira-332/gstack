@@ -378,11 +378,13 @@ describe('SPA and buffers', () => {
 // ─── Cookies / Storage ──────────────────────────────────────────
 
 describe('Cookies and storage', () => {
-  test('cookies returns array', async () => {
+  test('cookies returns redacted summary by default', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const result = await handleReadCommand('cookies', [], bm);
-    // Test server doesn't set cookies, so empty array
-    expect(result).toBe('[]');
+    // Test server doesn't set cookies, so summary should be empty.
+    const summary = JSON.parse(result);
+    expect(summary.count).toBe(0);
+    expect(summary.cookies).toEqual([]);
   });
 
   test('storage set and get works', async () => {
@@ -1119,8 +1121,19 @@ describe('Cookie command', () => {
     expect(result).toContain('Cookie set');
 
     const cookies = await handleReadCommand('cookies', [], bm);
-    expect(cookies).toContain('testcookie');
-    expect(cookies).toContain('testvalue');
+    const summary = JSON.parse(cookies);
+    const cookie = summary.cookies.find((entry: any) => entry.name === 'testcookie');
+    expect(cookie).toBeDefined();
+    expect(cookie.value).toMatch(/REDACTED/);
+  });
+
+  test('cookies --raw returns raw cookie values', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
+    await handleWriteCommand('cookie', ['rawcookie=rawvalue'], bm);
+
+    const raw = await handleReadCommand('cookies', ['--raw'], bm);
+    expect(raw).toContain('rawcookie');
+    expect(raw).toContain('rawvalue');
   });
 
   test('cookie no arg throws', async () => {
@@ -1447,8 +1460,10 @@ describe('Workflows', () => {
     await handleWriteCommand('cookie', ['workflow-test=persisted'], bm);
     await handleWriteCommand('reload', [], bm);
     const cookies = await handleReadCommand('cookies', [], bm);
-    expect(cookies).toContain('workflow-test');
-    expect(cookies).toContain('persisted');
+    const summary = JSON.parse(cookies);
+    const cookie = summary.cookies.find((entry: any) => entry.name === 'workflow-test');
+    expect(cookie).toBeDefined();
+    expect(cookie.value).toMatch(/REDACTED/);
   });
 });
 
@@ -1551,9 +1566,10 @@ describe('Cookie import', () => {
 
     // Verify cookies were set
     const cookieList = await handleReadCommand('cookies', [], bm);
-    expect(cookieList).toContain('test-cookie');
-    expect(cookieList).toContain('test-value');
-    expect(cookieList).toContain('another');
+    const summary = JSON.parse(cookieList);
+    const imported = summary.cookies.filter((cookie: any) => ['test-cookie', 'another'].includes(cookie.name));
+    expect(imported).toHaveLength(2);
+    expect(imported.every((cookie: any) => /REDACTED/.test(cookie.value))).toBe(true);
 
     fs.unlinkSync(tempFile);
   });
@@ -1569,7 +1585,9 @@ describe('Cookie import', () => {
     expect(result).toContain('Loaded 1');
 
     const cookieList = await handleReadCommand('cookies', [], bm);
-    expect(cookieList).toContain('autofill-test');
+    const summary = JSON.parse(cookieList);
+    const cookie = summary.cookies.find((entry: any) => entry.name === 'autofill-test');
+    expect(cookie).toBeDefined();
 
     fs.unlinkSync(tempFile);
   });

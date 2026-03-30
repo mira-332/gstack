@@ -96,14 +96,23 @@ export function generateBrowseSetup(ctx: TemplateContext): string {
 \`\`\`bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/${ctx.paths.localSkillRoot}/browse/dist/browse" ] && B="$_ROOT/${ctx.paths.localSkillRoot}/browse/dist/browse"
-[ -z "$B" ] && B=${ctx.paths.browseDir}/browse
-if [ -x "$B" ]; then
+[ -n "$_ROOT" ] && [ -f "$_ROOT/${ctx.paths.localSkillRoot}/browse/dist/browse.exe" ] && B="$_ROOT/${ctx.paths.localSkillRoot}/browse/dist/browse.exe"
+[ -z "$B" ] && [ -n "$_ROOT" ] && [ -x "$_ROOT/${ctx.paths.localSkillRoot}/browse/dist/browse" ] && B="$_ROOT/${ctx.paths.localSkillRoot}/browse/dist/browse"
+[ -z "$B" ] && [ -f "${ctx.paths.browseDir}/browse.exe" ] && B="${ctx.paths.browseDir}/browse.exe"
+[ -z "$B" ] && [ -x "${ctx.paths.browseDir}/browse" ] && B="${ctx.paths.browseDir}/browse"
+if [ -n "$B" ] && [ -e "$B" ]; then
   echo "READY: $B"
 else
   echo "NEEDS_SETUP"
 fi
 \`\`\`
+
+If \`READY\`: use \`$B\` for every browser action in this workflow.
+On Codex, the local gstack browse runtime is the source of truth for browser state.
+Do **not** substitute host-native MCP or Playwright browser tools for \`$B\`.
+Mixing control planes breaks session continuity, hides gstack-specific bugs, and invalidates Windows verification.
+If the first \`$B\` command fails or times out, do **not** start debugging gstack internals unless the user explicitly asked to debug gstack itself.
+Stop, report the runtime failure clearly, and preserve the verification boundary.
 
 If \`NEEDS_SETUP\`:
 1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
@@ -125,5 +134,7 @@ If \`NEEDS_SETUP\`:
      BUN_VERSION="$BUN_VERSION" bash "$tmpfile"
      rm "$tmpfile"
    fi
-   \`\`\``;
+   \`\`\`
+
+On Windows, the supported no-WSL runtime requires both \`browse.exe\` and \`browse/dist/server-node.mjs\`.`;
 }

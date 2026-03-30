@@ -36,6 +36,40 @@ function wrapForEvaluate(code: string): string {
     : `(async()=>(${trimmed}))()`;
 }
 
+type CookieLike = {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: string;
+  partitioned?: boolean;
+};
+
+function redactCookieValue(value: string): string {
+  return `[REDACTED — ${value.length} chars]`;
+}
+
+function summarizeCookie(cookie: CookieLike): Record<string, unknown> {
+  const summary: Record<string, unknown> = {
+    name: cookie.name,
+    domain: cookie.domain,
+    path: cookie.path,
+    expires: cookie.expires,
+    flags: {
+      httpOnly: cookie.httpOnly,
+      secure: cookie.secure,
+      sameSite: cookie.sameSite,
+      partitioned: cookie.partitioned,
+    },
+    value: redactCookieValue(cookie.value),
+  };
+
+  return summary;
+}
+
 // Security: Path validation to prevent path traversal attacks
 // Resolve safe directories through realpathSync to handle symlinks (e.g., macOS /tmp → /private/tmp)
 const SAFE_DIRECTORIES = [TEMP_DIR, process.cwd()].map(d => {
@@ -298,8 +332,15 @@ export async function handleReadCommand(
     }
 
     case 'cookies': {
+      if (args[0] === '--raw') {
+        const cookies = await page.context().cookies();
+        return JSON.stringify(cookies, null, 2);
+      }
       const cookies = await page.context().cookies();
-      return JSON.stringify(cookies, null, 2);
+      return JSON.stringify({
+        count: cookies.length,
+        cookies: cookies.map(summarizeCookie),
+      }, null, 2);
     }
 
     case 'storage': {
