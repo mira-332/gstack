@@ -11,6 +11,11 @@ bin/gstack-global-discover
 extension/.auth.json
 .gstack-worktrees/
 /tmp/
+.runtime/
+.tmp/
+.vscode/
+q/
+quality-os-work/
 *.log
 *.bun-build
 .env
@@ -18,3 +23,6 @@ extension/.auth.json
 .env.*
 !.env.example
 supabase/.temp/
+bin/gstack-global-discover.exe
+browse/test/fixtures/test-cookies.db
+browse/test/fixtures/test-cookies-linux.db
