@@ -12,14 +12,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Compute SLUG directly (avoid eval of gstack-slug — branch names can contain shell metacharacters)
-REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
-if [ -z "$REMOTE_URL" ]; then
+# Compute SLUG from explicit project identity first (avoid git-origin-only coupling).
+if [ -x "$SCRIPT_DIR/gstack-project-identity" ]; then
+  eval "$("$SCRIPT_DIR/gstack-project-identity" 2>/dev/null || true)"
+fi
+SLUG="${GSTACK_REPO_SLUG:-}"
+if [ -z "$SLUG" ]; then
   echo "REPO_MODE=unknown"
   exit 0
 fi
-SLUG=$(echo "$REMOTE_URL" | sed 's|.*[:/]\([^/]*/[^/]*\)\.git$|\1|;s|.*[:/]\([^/]*/[^/]*\)$|\1|' | tr '/' '-')
-[ -z "${SLUG:-}" ] && { echo "REPO_MODE=unknown"; exit 0; }
 
 # Validate: only allow known values (prevent shell injection via source <(...))
 validate_mode() {

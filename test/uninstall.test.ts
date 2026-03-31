@@ -3,18 +3,40 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { resolveBashExecutable } from '../scripts/bun-exec';
 
 const ROOT = path.resolve(import.meta.dir, '..');
 const UNINSTALL = path.join(ROOT, 'bin', 'gstack-uninstall');
+const BASH = resolveBashExecutable();
+const BASH_RUNTIME_OK = (() => {
+  const result = spawnSync(BASH, ['-lc', 'echo ok'], { stdio: 'pipe', env: process.env });
+  return result.status === 0;
+})();
+const CAN_CREATE_SYMLINKS = (() => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gstack-symlink-test-'));
+  try {
+    const targetDir = path.join(tmpDir, 'target');
+    const linkDir = path.join(tmpDir, 'link');
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.symlinkSync(targetDir, linkDir, 'junction');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+})();
 
 describe('gstack-uninstall', () => {
   test('syntax check passes', () => {
-    const result = spawnSync('bash', ['-n', UNINSTALL], { stdio: 'pipe' });
+    if (!BASH_RUNTIME_OK) return;
+    const result = spawnSync(BASH, ['-n', UNINSTALL], { stdio: 'pipe', env: process.env });
     expect(result.status).toBe(0);
   });
 
   test('--help prints usage and exits 0', () => {
-    const result = spawnSync('bash', [UNINSTALL, '--help'], { stdio: 'pipe' });
+    if (!BASH_RUNTIME_OK) return;
+    const result = spawnSync(BASH, [UNINSTALL, '--help'], { stdio: 'pipe', env: process.env });
     expect(result.status).toBe(0);
     const output = result.stdout.toString();
     expect(output).toContain('gstack-uninstall');
@@ -23,7 +45,8 @@ describe('gstack-uninstall', () => {
   });
 
   test('unknown flag exits with error', () => {
-    const result = spawnSync('bash', [UNINSTALL, '--bogus'], {
+    if (!BASH_RUNTIME_OK) return;
+    const result = spawnSync(BASH, [UNINSTALL, '--bogus'], {
       stdio: 'pipe',
       env: { ...process.env, HOME: '/nonexistent' },
     });
@@ -37,17 +60,20 @@ describe('gstack-uninstall', () => {
     let mockGitRoot: string;
 
     beforeEach(() => {
+      if (!BASH_RUNTIME_OK || !CAN_CREATE_SYMLINKS) return;
       tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gstack-uninstall-test-'));
       mockHome = path.join(tmpDir, 'home');
       mockGitRoot = path.join(tmpDir, 'repo');
 
       // Create mock gstack install layout
       fs.mkdirSync(path.join(mockHome, '.claude', 'skills', 'gstack'), { recursive: true });
+      fs.mkdirSync(path.join(mockHome, '.claude', 'skills', 'gstack', 'review'), { recursive: true });
+      fs.mkdirSync(path.join(mockHome, '.claude', 'skills', 'gstack', 'ship'), { recursive: true });
       fs.writeFileSync(path.join(mockHome, '.claude', 'skills', 'gstack', 'SKILL.md'), 'test');
 
       // Create per-skill symlinks (both old unprefixed and new prefixed)
-      fs.symlinkSync('gstack/review', path.join(mockHome, '.claude', 'skills', 'review'));
-      fs.symlinkSync('gstack/ship', path.join(mockHome, '.claude', 'skills', 'gstack-ship'));
+      fs.symlinkSync(path.join(mockHome, '.claude', 'skills', 'gstack', 'review'), path.join(mockHome, '.claude', 'skills', 'review'), 'junction');
+      fs.symlinkSync(path.join(mockHome, '.claude', 'skills', 'gstack', 'ship'), path.join(mockHome, '.claude', 'skills', 'gstack-ship'), 'junction');
 
       // Create a non-gstack symlink (should NOT be removed)
       fs.mkdirSync(path.join(mockHome, '.claude', 'skills', 'other-tool'), { recursive: true });
@@ -62,11 +88,13 @@ describe('gstack-uninstall', () => {
     });
 
     afterEach(() => {
+      if (!tmpDir) return;
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
     test('--force removes global Claude skills and state', () => {
-      const result = spawnSync('bash', [UNINSTALL, '--force'], {
+      if (!BASH_RUNTIME_OK || !CAN_CREATE_SYMLINKS) return;
+      const result = spawnSync(BASH, [UNINSTALL, '--force'], {
         stdio: 'pipe',
         env: {
           ...process.env,
@@ -96,7 +124,8 @@ describe('gstack-uninstall', () => {
     });
 
     test('--keep-state preserves state directory', () => {
-      const result = spawnSync('bash', [UNINSTALL, '--force', '--keep-state'], {
+      if (!BASH_RUNTIME_OK || !CAN_CREATE_SYMLINKS) return;
+      const result = spawnSync(BASH, [UNINSTALL, '--force', '--keep-state'], {
         stdio: 'pipe',
         env: {
           ...process.env,
@@ -118,10 +147,11 @@ describe('gstack-uninstall', () => {
     });
 
     test('clean system outputs nothing to remove', () => {
+      if (!BASH_RUNTIME_OK || !CAN_CREATE_SYMLINKS) return;
       const cleanHome = path.join(tmpDir, 'clean-home');
       fs.mkdirSync(cleanHome, { recursive: true });
 
-      const result = spawnSync('bash', [UNINSTALL, '--force'], {
+      const result = spawnSync(BASH, [UNINSTALL, '--force'], {
         stdio: 'pipe',
         env: {
           ...process.env,
@@ -137,11 +167,12 @@ describe('gstack-uninstall', () => {
     });
 
     test('upgrade path: prefixed install + uninstall cleans both old and new symlinks', () => {
+      if (!BASH_RUNTIME_OK || !CAN_CREATE_SYMLINKS) return;
       // Simulate the state after setup --no-prefix followed by setup (with prefix):
       // Both old unprefixed and new prefixed symlinks exist
       // (mockHome already has both 'review' and 'gstack-ship' symlinks)
 
-      const result = spawnSync('bash', [UNINSTALL, '--force'], {
+      const result = spawnSync(BASH, [UNINSTALL, '--force'], {
         stdio: 'pipe',
         env: {
           ...process.env,

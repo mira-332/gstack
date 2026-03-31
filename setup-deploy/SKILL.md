@@ -408,7 +408,8 @@ When the user types `/setup-deploy`, run this skill.
 ### Step 1: Check existing configuration
 
 ```bash
-grep -A 20 "## Deploy Configuration" CLAUDE.md 2>/dev/null || echo "NO_CONFIG"
+grep -A 20 "## Project Identity" CLAUDE.md 2>/dev/null || echo "NO_PROJECT_IDENTITY"
+grep -A 20 "## Deploy Configuration" CLAUDE.md 2>/dev/null || echo "NO_DEPLOY_CONFIG"
 ```
 
 If configuration already exists, show it and ask:
@@ -527,11 +528,15 @@ Use AskUserQuestion to gather the information:
 
 ### Step 4: Write configuration
 
-Read CLAUDE.md (or create it). Find and replace the `## Deploy Configuration` section
-if it exists, or append it at the end.
+Read CLAUDE.md (or create it). Find and replace the `## Project Identity` and
+`## Deploy Configuration` sections if they exist, or append them at the end.
 
 ```markdown
-## Deploy Configuration (configured by /setup-deploy)
+## Project Identity
+- Repository URL: {canonical repository URL}
+- Repository Slug: {owner-repo slug}
+
+## Deploy Configuration
 - Platform: {platform}
 - Production URL: {url}
 - Deploy workflow: {workflow file or "auto-deploy on push"}
@@ -579,7 +584,7 @@ Saved to CLAUDE.md. /land-and-deploy will use these settings automatically.
 
 Next steps:
 - Run /land-and-deploy to merge and deploy your current PR
-- Edit the "## Deploy Configuration" section in CLAUDE.md to change settings
+- Edit the "## Project Identity" or "## Deploy Configuration" sections in CLAUDE.md to change settings
 - Run /setup-deploy again to reconfigure
 ```
 

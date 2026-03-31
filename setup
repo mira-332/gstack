@@ -2,7 +2,35 @@
 # gstack setup — build browser binary + register skills with Claude Code / Codex
 set -e
 
-if ! command -v bun >/dev/null 2>&1; then
+find_bun_bin() {
+  if command -v bun >/dev/null 2>&1; then
+    command -v bun
+    return 0
+  fi
+  if [ -x "$HOME/.bun/bin/bun.exe" ]; then
+    echo "$HOME/.bun/bin/bun.exe"
+    return 0
+  fi
+  if [ -x "$HOME/.bun/bin/bun" ]; then
+    echo "$HOME/.bun/bin/bun"
+    return 0
+  fi
+  return 1
+}
+
+resolve_compiled_bin() {
+  local dir="$1"
+  local name="$2"
+  if [ -f "$dir/$name.exe" ]; then
+    echo "$dir/$name.exe"
+  else
+    echo "$dir/$name"
+  fi
+}
+
+BUN_BIN="${BUN_BIN:-$(find_bun_bin || true)}"
+
+if [ -z "$BUN_BIN" ]; then
   echo "Error: bun is required but not installed." >&2
   echo "Install with checksum verification:" >&2
   echo '  BUN_VERSION="1.3.10"' >&2
@@ -16,7 +44,7 @@ fi
 INSTALL_GSTACK_DIR="$(cd "$(dirname "$0")" && pwd)"
 SOURCE_GSTACK_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 INSTALL_SKILLS_DIR="$(dirname "$INSTALL_GSTACK_DIR")"
-BROWSE_BIN="$SOURCE_GSTACK_DIR/browse/dist/browse"
+BROWSE_BIN="$(resolve_compiled_bin "$SOURCE_GSTACK_DIR/browse/dist" browse)"
 CODEX_SKILLS="$HOME/.codex/skills"
 CODEX_GSTACK="$CODEX_SKILLS/gstack"
 FACTORY_SKILLS="$HOME/.factory/skills"
@@ -143,7 +171,7 @@ migrate_direct_codex_install() {
   SOURCE_GSTACK_DIR="$migrated_dir"
   INSTALL_GSTACK_DIR="$migrated_dir"
   INSTALL_SKILLS_DIR="$(dirname "$INSTALL_GSTACK_DIR")"
-  BROWSE_BIN="$SOURCE_GSTACK_DIR/browse/dist/browse"
+  BROWSE_BIN="$(resolve_compiled_bin "$SOURCE_GSTACK_DIR/browse/dist" browse)"
 }
 
 if [ "$INSTALL_CODEX" -eq 1 ]; then
@@ -161,7 +189,7 @@ ensure_playwright_browser() {
   else
     (
       cd "$SOURCE_GSTACK_DIR"
-      bun --eval 'import { chromium } from "playwright"; const browser = await chromium.launch(); await browser.close();'
+      "$BUN_BIN" --eval 'import { chromium } from "playwright"; const browser = await chromium.launch(); await browser.close();'
     ) >/dev/null 2>&1
   fi
 }
@@ -182,16 +210,17 @@ if [ "$NEEDS_BUILD" -eq 1 ]; then
   echo "Building browse binary..."
   (
     cd "$SOURCE_GSTACK_DIR"
-    bun install
-    bun run build
+    "$BUN_BIN" install
+    "$BUN_BIN" run build
   )
+  BROWSE_BIN="$(resolve_compiled_bin "$SOURCE_GSTACK_DIR/browse/dist" browse)"
   # Safety net: write .version if build script didn't (e.g., git not available during build)
   if [ ! -f "$SOURCE_GSTACK_DIR/browse/dist/.version" ]; then
     git -C "$SOURCE_GSTACK_DIR" rev-parse HEAD > "$SOURCE_GSTACK_DIR/browse/dist/.version" 2>/dev/null || true
   fi
 fi
 
-if [ ! -x "$BROWSE_BIN" ]; then
+if [ ! -e "$BROWSE_BIN" ]; then
   echo "gstack setup failed: browse binary missing at $BROWSE_BIN" >&2
   exit 1
 fi
@@ -208,8 +237,8 @@ if [ "$NEEDS_AGENTS_GEN" -eq 1 ] && [ "$NEEDS_BUILD" -eq 0 ]; then
   echo "Generating .agents/ skill docs..."
   (
     cd "$SOURCE_GSTACK_DIR"
-    bun install --frozen-lockfile 2>/dev/null || bun install
-    bun run gen:skill-docs --host codex
+    "$BUN_BIN" install --frozen-lockfile 2>/dev/null || "$BUN_BIN" install
+    "$BUN_BIN" run gen:skill-docs --host codex
   )
 fi
 
@@ -218,8 +247,8 @@ if [ "$INSTALL_FACTORY" -eq 1 ] && [ "$NEEDS_BUILD" -eq 0 ]; then
   echo "Generating .factory/ skill docs..."
   (
     cd "$SOURCE_GSTACK_DIR"
-    bun install --frozen-lockfile 2>/dev/null || bun install
-    bun run gen:skill-docs --host factory
+    "$BUN_BIN" install --frozen-lockfile 2>/dev/null || "$BUN_BIN" install
+    "$BUN_BIN" run gen:skill-docs --host factory
   )
 fi
 
@@ -266,7 +295,7 @@ pin_browse_runtime_trust() {
   echo "Pinning browse runtime trust..."
   (
     cd "$SOURCE_GSTACK_DIR"
-    bun run browse/scripts/write-runtime-trust.ts \
+    "$BUN_BIN" run browse/scripts/write-runtime-trust.ts \
       --runtime-dir "$SOURCE_GSTACK_DIR/browse/dist" \
       --output "$HOME/.gstack/trust/gstack-browse-runtime.json"
   )
@@ -386,7 +415,7 @@ link_codex_skill_dirs() {
 
   if [ ! -d "$agents_dir" ]; then
     echo "  Generating .agents/ skill docs..."
-    ( cd "$gstack_dir" && bun run gen:skill-docs --host codex )
+    ( cd "$gstack_dir" && "$BUN_BIN" run gen:skill-docs --host codex )
   fi
 
   if [ ! -d "$agents_dir" ]; then
@@ -544,7 +573,7 @@ link_factory_skill_dirs() {
 
   if [ ! -d "$factory_dir" ]; then
     echo "  Generating .factory/ skill docs..."
-    ( cd "$gstack_dir" && bun run gen:skill-docs --host factory )
+    ( cd "$gstack_dir" && "$BUN_BIN" run gen:skill-docs --host factory )
   fi
 
   if [ ! -d "$factory_dir" ]; then

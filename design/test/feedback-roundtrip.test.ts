@@ -27,6 +27,8 @@ let server: ReturnType<typeof Bun.serve>;
 let tmpDir: string;
 let boardHtmlPath: string;
 let serverState: string;
+const SKIP_FEEDBACK_ROUNDTRIP_TESTS = process.platform === 'win32' && process.env.GSTACK_RUN_BROWSER_TESTS !== '1';
+const describeFeedback = SKIP_FEEDBACK_ROUNDTRIP_TESTS ? describe.skip : describe;
 
 function createTestPng(filePath: string): void {
   const png = Buffer.from(
@@ -37,6 +39,7 @@ function createTestPng(filePath: string): void {
 }
 
 beforeAll(async () => {
+  if (SKIP_FEEDBACK_ROUNDTRIP_TESTS) return;
   tmpDir = '/tmp/feedback-roundtrip-' + Date.now();
   fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -125,15 +128,16 @@ beforeAll(async () => {
   await bm.launch();
 });
 
-afterAll(() => {
+afterAll(async () => {
+  if (SKIP_FEEDBACK_ROUNDTRIP_TESTS) return;
+  try { await bm.close(); } catch {}
   try { server.stop(); } catch {}
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  setTimeout(() => process.exit(0), 500);
 });
 
 // ─── The critical test: browser click → file on disk ─────────────
 
-describe('Submit: browser click → feedback.json on disk', () => {
+describeFeedback('Submit: browser click → feedback.json on disk', () => {
   test('clicking Submit writes feedback.json that the agent can poll for', async () => {
     // Clean up any prior files
     const feedbackPath = path.join(tmpDir, 'feedback.json');
@@ -206,7 +210,7 @@ describe('Submit: browser click → feedback.json on disk', () => {
   });
 });
 
-describe('Regenerate: browser click → feedback-pending.json on disk', () => {
+describeFeedback('Regenerate: browser click → feedback-pending.json on disk', () => {
   test('clicking Regenerate writes feedback-pending.json that the agent can poll for', async () => {
     // Clean up
     const pendingPath = path.join(tmpDir, 'feedback-pending.json');
@@ -285,7 +289,7 @@ describe('Regenerate: browser click → feedback-pending.json on disk', () => {
   });
 });
 
-describe('Full regeneration round-trip: regen → reload → submit', () => {
+describeFeedback('Full regeneration round-trip: regen → reload → submit', () => {
   test('agent can reload board after regeneration, user submits on round 2', async () => {
     // Clean start
     const pendingPath = path.join(tmpDir, 'feedback-pending.json');

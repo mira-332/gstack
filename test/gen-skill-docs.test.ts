@@ -1,13 +1,32 @@
 import { describe, test, expect } from 'bun:test';
 import { COMMAND_DESCRIPTIONS } from '../browse/src/commands';
 import { SNAPSHOT_FLAGS } from '../browse/src/snapshot';
+import { resolveBunInvocation } from '../scripts/bun-exec';
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
 const ROOT = path.resolve(import.meta.dir, '..');
-const BUN = process.execPath;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
+
+function runBun(args: string[]) {
+  const bun = resolveBunInvocation(args);
+  const result = spawnSync(bun.command, bun.args, {
+    cwd: ROOT,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: process.env,
+  });
+  const exitCode = result.status ?? (result as any).exitCode ?? 1;
+  return {
+    ...result,
+    status: exitCode,
+    exitCode,
+    stdout: result.stdout ?? Buffer.from(''),
+    stderr: result.stderr ?? Buffer.from(''),
+  };
+}
 
 function extractDescription(content: string): string {
   const frontmatterStart = content.startsWith('---\r\n') ? 5 : 4;
@@ -180,12 +199,8 @@ describe('gen-skill-docs', () => {
   });
 
   test('generated files are fresh (match --dry-run)', () => {
-    const result = Bun.spawnSync([BUN, 'run', 'scripts/gen-skill-docs.ts', '--dry-run'], {
-      cwd: ROOT,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    expect(result.exitCode).toBe(0);
+    const result = runBun(['run', 'scripts/gen-skill-docs.ts', '--dry-run']);
+    expect(result.status).toBe(0);
     const output = result.stdout.toString().replace(/\\/g, '/');
     // Every skill should be FRESH
     for (const skill of ALL_SKILLS) {
@@ -1407,9 +1422,7 @@ describe('Codex generation (--host codex)', () => {
   const AGENTS_DIR = path.join(ROOT, '.agents', 'skills');
 
   // .agents/ is gitignored (v0.11.2.0) — generate on demand for tests
-  Bun.spawnSync([BUN, 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex'], {
-    cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
-  });
+  runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'codex']);
 
   // Dynamic discovery of expected Codex skills: all templates except /codex
   // Also excludes skills where .agents/skills/{name} is a symlink back to the repo root
@@ -1526,12 +1539,8 @@ describe('Codex generation (--host codex)', () => {
   });
 
   test('--host codex --dry-run freshness', () => {
-    const result = Bun.spawnSync([BUN, 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex', '--dry-run'], {
-      cwd: ROOT,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    expect(result.exitCode).toBe(0);
+    const result = runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'codex', '--dry-run']);
+    expect(result.status).toBe(0);
     const output = result.stdout.toString().replace(/\\/g, '/');
     // Every Codex skill should be FRESH
     for (const skill of CODEX_SKILLS) {
@@ -1541,18 +1550,10 @@ describe('Codex generation (--host codex)', () => {
   });
 
   test('--host agents alias produces same output as --host codex', () => {
-    const codexResult = Bun.spawnSync([BUN, 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex', '--dry-run'], {
-      cwd: ROOT,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    const agentsResult = Bun.spawnSync([BUN, 'run', 'scripts/gen-skill-docs.ts', '--host', 'agents', '--dry-run'], {
-      cwd: ROOT,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    expect(codexResult.exitCode).toBe(0);
-    expect(agentsResult.exitCode).toBe(0);
+    const codexResult = runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'codex', '--dry-run']);
+    const agentsResult = runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'agents', '--dry-run']);
+    expect(codexResult.status).toBe(0);
+    expect(agentsResult.status).toBe(0);
     // Both should produce the same output (same FRESH lines)
     expect(codexResult.stdout.toString()).toBe(agentsResult.stdout.toString());
   });
@@ -1726,9 +1727,7 @@ describe('Factory generation (--host factory)', () => {
   const FACTORY_DIR = path.join(ROOT, '.factory', 'skills');
 
   // Generate Factory output for tests
-  Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'factory'], {
-    cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
-  });
+  runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'factory']);
 
   const FACTORY_SKILLS = (() => {
     const skills: Array<{ dir: string; factoryName: string }> = [];
@@ -1827,22 +1826,16 @@ describe('Factory generation (--host factory)', () => {
   });
 
   test('--host droid alias works', () => {
-    const factoryResult = Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'factory', '--dry-run'], {
-      cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
-    });
-    const droidResult = Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'droid', '--dry-run'], {
-      cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
-    });
-    expect(factoryResult.exitCode).toBe(0);
-    expect(droidResult.exitCode).toBe(0);
+    const factoryResult = runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'factory', '--dry-run']);
+    const droidResult = runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'droid', '--dry-run']);
+    expect(factoryResult.status).toBe(0);
+    expect(droidResult.status).toBe(0);
     expect(factoryResult.stdout.toString()).toBe(droidResult.stdout.toString());
   });
 
   test('--host factory --dry-run freshness', () => {
-    const result = Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'factory', '--dry-run'], {
-      cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
-    });
-    expect(result.exitCode).toBe(0);
+    const result = runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'factory', '--dry-run']);
+    expect(result.status).toBe(0);
     const output = result.stdout.toString();
     for (const skill of FACTORY_SKILLS) {
       expect(output).toContain(`FRESH: .factory/skills/${skill.factoryName}/SKILL.md`);
@@ -1862,10 +1855,8 @@ describe('Factory generation (--host factory)', () => {
 
 describe('--host all', () => {
   test('--host all generates for claude, codex, and factory', () => {
-    const result = Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'all', '--dry-run'], {
-      cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
-    });
-    expect(result.exitCode).toBe(0);
+    const result = runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'all', '--dry-run']);
+    expect(result.status).toBe(0);
     const output = result.stdout.toString();
     // All three hosts should appear in output
     expect(output).toContain('FRESH: SKILL.md');           // claude

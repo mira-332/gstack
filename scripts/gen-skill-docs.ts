@@ -21,21 +21,23 @@ import { externalSkillName, extractHookSafetyProse as _extractHookSafetyProse, e
 import { generatePlanCompletionAuditShip, generatePlanCompletionAuditReview, generatePlanVerificationExec } from './resolvers/review';
 
 const ROOT = path.resolve(import.meta.dir, '..');
-const DRY_RUN = process.argv.includes('--dry-run');
+let DRY_RUN = process.argv.includes('--dry-run');
 
 // ─── Host Detection ─────────────────────────────────────────
 
-const HOST_ARG = process.argv.find(a => a.startsWith('--host'));
 type HostArg = Host | 'all';
-const HOST_ARG_VAL: HostArg = (() => {
-  if (!HOST_ARG) return 'claude';
-  const val = HOST_ARG.includes('=') ? HOST_ARG.split('=')[1] : process.argv[process.argv.indexOf(HOST_ARG) + 1];
+function parseHostArg(argv: string[] = process.argv): HostArg {
+  const hostArg = argv.find(a => a.startsWith('--host'));
+  if (!hostArg) return 'claude';
+  const val = hostArg.includes('=') ? hostArg.split('=')[1] : argv[argv.indexOf(hostArg) + 1];
   if (val === 'codex' || val === 'agents') return 'codex';
   if (val === 'factory' || val === 'droid') return 'factory';
   if (val === 'claude') return 'claude';
   if (val === 'all') return 'all';
   throw new Error(`Unknown host: ${val}. Use claude, codex, factory, droid, agents, or all.`);
-})();
+}
+
+let HOST_ARG_VAL: HostArg = parseHostArg(process.argv);
 
 // For single-host mode, HOST is the host. For --host all, it's set per iteration below.
 let HOST: Host = HOST_ARG_VAL === 'all' ? 'claude' : HOST_ARG_VAL;
@@ -96,6 +98,10 @@ function externalSkillName(skillDir: string, frontmatterName?: string): string {
 
 function normalizeLineEndings(content: string): string {
   return content.replace(/\r\n/g, '\n');
+}
+
+function toPortableRelativePath(filePath: string): string {
+  return path.relative(ROOT, filePath).replace(/\\/g, '/');
 }
 
 function extractNameAndDescription(content: string): { name: string; description: string } {
@@ -325,11 +331,16 @@ function processExternalHost(
   }
 
   // Codex-only: generate openai.yaml metadata
-  if (config.generateMetadata && !symlinkLoop) {
+  if (config.generateMetadata && !symlinkLoop && !DRY_RUN) {
     const agentsDir = path.join(outputDir, 'agents');
     fs.mkdirSync(agentsDir, { recursive: true });
     const shortDescription = condenseOpenAIShortDescription(extractedDescription || frontmatterName || name);
-    fs.writeFileSync(path.join(agentsDir, 'openai.yaml'), generateOpenAIYaml(name, shortDescription));
+    const metadataPath = path.join(agentsDir, 'openai.yaml');
+    const metadata = generateOpenAIYaml(name, shortDescription);
+    const existingMetadata = fs.existsSync(metadataPath) ? fs.readFileSync(metadataPath, 'utf-8') : null;
+    if (existingMetadata !== metadata) {
+      fs.writeFileSync(metadataPath, metadata);
+    }
   }
 
   return { content: result, outputPath, outputDir, symlinkLoop };
@@ -410,79 +421,101 @@ function findTemplates(): string[] {
 }
 
 const ALL_HOSTS: Host[] = ['claude', 'codex', 'factory'];
-const hostsToRun: Host[] = HOST_ARG_VAL === 'all' ? ALL_HOSTS : [HOST];
-const failures: { host: string; error: Error }[] = [];
 
-for (const currentHost of hostsToRun) {
-  HOST = currentHost;
+interface RunGenSkillDocsOptions {
+  argv?: string[];
+  hostArg?: HostArg;
+  dryRun?: boolean;
+  log?: (line: string) => void;
+  error?: (line: string) => void;
+}
 
-  try {
-    let hasChanges = false;
-    const tokenBudget: Array<{ skill: string; lines: number; tokens: number }> = [];
+export function runGenSkillDocs(options: RunGenSkillDocsOptions = {}): number {
+  const argv = options.argv ?? process.argv;
+  HOST_ARG_VAL = options.hostArg ?? parseHostArg(argv);
+  DRY_RUN = options.dryRun ?? argv.includes('--dry-run');
+  HOST = HOST_ARG_VAL === 'all' ? 'claude' : HOST_ARG_VAL;
 
-    for (const tmplPath of findTemplates()) {
-      // Skip /codex skill for non-Claude hosts (it's a Claude wrapper around codex exec)
-      if (currentHost !== 'claude') {
-        const dir = path.basename(path.dirname(tmplPath));
-        if (dir === 'codex') continue;
-      }
+  const log = options.log ?? console.log;
+  const error = options.error ?? console.error;
+  const hostsToRun: Host[] = HOST_ARG_VAL === 'all' ? ALL_HOSTS : [HOST];
+  const failures: { host: string; error: Error }[] = [];
 
-      const { outputPath, content, symlinkLoop } = processTemplate(tmplPath, currentHost);
-      const relOutput = path.relative(ROOT, outputPath);
+  for (const currentHost of hostsToRun) {
+    HOST = currentHost;
 
-      if (symlinkLoop) {
-        console.log(`SKIPPED (symlink loop): ${relOutput}`);
-      } else if (DRY_RUN) {
-        const existing = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : '';
-        if (existing !== content) {
-          console.log(`STALE: ${relOutput}`);
-          hasChanges = true;
-        } else {
-          console.log(`FRESH: ${relOutput}`);
+    try {
+      let hasChanges = false;
+      const tokenBudget: Array<{ skill: string; lines: number; tokens: number }> = [];
+
+      for (const tmplPath of findTemplates()) {
+        if (currentHost !== 'claude') {
+          const dir = path.basename(path.dirname(tmplPath));
+          if (dir === 'codex') continue;
         }
-      } else {
-        fs.writeFileSync(outputPath, content);
-        console.log(`GENERATED: ${relOutput}`);
+
+        const { outputPath, content, symlinkLoop } = processTemplate(tmplPath, currentHost);
+        const relOutput = toPortableRelativePath(outputPath);
+
+        if (symlinkLoop) {
+          log(`SKIPPED (symlink loop): ${relOutput}`);
+        } else if (DRY_RUN) {
+          const existing = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : '';
+          if (normalizeLineEndings(existing) !== normalizeLineEndings(content)) {
+            log(`STALE: ${relOutput}`);
+            hasChanges = true;
+          } else {
+            log(`FRESH: ${relOutput}`);
+          }
+        } else {
+          const existing = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : null;
+          if (existing === null || normalizeLineEndings(existing) !== normalizeLineEndings(content)) {
+            fs.writeFileSync(outputPath, content);
+            log(`GENERATED: ${relOutput}`);
+          }
+        }
+
+        const lines = content.split('\n').length;
+        const tokens = Math.round(content.length / 4);
+        tokenBudget.push({ skill: relOutput, lines, tokens });
       }
 
-      // Track token budget
-      const lines = content.split('\n').length;
-      const tokens = Math.round(content.length / 4); // ~4 chars per token
-      tokenBudget.push({ skill: relOutput, lines, tokens });
-    }
-
-    if (DRY_RUN && hasChanges) {
-      console.error(`\nGenerated SKILL.md files are stale (${currentHost} host). Run: bun run gen:skill-docs --host ${currentHost}`);
-      if (HOST_ARG_VAL !== 'all') process.exit(1);
-      failures.push({ host: currentHost, error: new Error('Stale files detected') });
-    }
-
-    // Print token budget summary
-    if (!DRY_RUN && tokenBudget.length > 0) {
-      tokenBudget.sort((a, b) => b.lines - a.lines);
-      const totalLines = tokenBudget.reduce((s, t) => s + t.lines, 0);
-      const totalTokens = tokenBudget.reduce((s, t) => s + t.tokens, 0);
-
-      console.log('');
-      console.log(`Token Budget (${currentHost} host)`);
-      console.log('═'.repeat(60));
-      for (const t of tokenBudget) {
-        const name = t.skill.replace(/\/SKILL\.md$/, '').replace(/^\.(agents|factory)\/skills\//, '');
-        console.log(`  ${name.padEnd(30)} ${String(t.lines).padStart(5)} lines  ~${String(t.tokens).padStart(6)} tokens`);
+      if (DRY_RUN && hasChanges) {
+        error(`\nGenerated SKILL.md files are stale (${currentHost} host). Run: bun run gen:skill-docs --host ${currentHost}`);
+        failures.push({ host: currentHost, error: new Error('Stale files detected') });
       }
-      console.log('─'.repeat(60));
-      console.log(`  ${'TOTAL'.padEnd(30)} ${String(totalLines).padStart(5)} lines  ~${String(totalTokens).padStart(6)} tokens`);
-      console.log('');
+
+      if (!DRY_RUN && tokenBudget.length > 0) {
+        tokenBudget.sort((a, b) => b.lines - a.lines);
+        const totalLines = tokenBudget.reduce((s, t) => s + t.lines, 0);
+        const totalTokens = tokenBudget.reduce((s, t) => s + t.tokens, 0);
+
+        log('');
+        log(`Token Budget (${currentHost} host)`);
+        log('═'.repeat(60));
+        for (const t of tokenBudget) {
+          const name = t.skill.replace(/\/SKILL\.md$/, '').replace(/^\.(agents|factory)\/skills\//, '');
+          log(`  ${name.padEnd(30)} ${String(t.lines).padStart(5)} lines  ~${String(t.tokens).padStart(6)} tokens`);
+        }
+        log('─'.repeat(60));
+        log(`  ${'TOTAL'.padEnd(30)} ${String(totalLines).padStart(5)} lines  ~${String(totalTokens).padStart(6)} tokens`);
+        log('');
+      }
+    } catch (e) {
+      failures.push({ host: currentHost, error: e as Error });
+      error(`WARNING: ${currentHost} generation failed: ${(e as Error).message}`);
     }
-  } catch (e) {
-    failures.push({ host: currentHost, error: e as Error });
-    console.error(`WARNING: ${currentHost} generation failed: ${(e as Error).message}`);
   }
+
+  if (failures.length > 0 && HOST_ARG_VAL === 'all') {
+    error(`\n${failures.length} host(s) failed: ${failures.map(f => f.host).join(', ')}`);
+    return failures.some(f => f.host === 'claude') ? 1 : 0;
+  }
+
+  return failures.length > 0 ? 1 : 0;
 }
 
-// --host all: report failures. Only exit(1) if claude failed.
-if (failures.length > 0 && HOST_ARG_VAL === 'all') {
-  console.error(`\n${failures.length} host(s) failed: ${failures.map(f => f.host).join(', ')}`);
-  if (failures.some(f => f.host === 'claude')) process.exit(1);
+if (import.meta.main) {
+  const exitCode = runGenSkillDocs();
+  if (exitCode !== 0) process.exit(exitCode);
 }
-// Single host dry-run failure already handled above

@@ -6,6 +6,7 @@ import {
   readVersionHash,
   getGitRoot,
   getRemoteSlug,
+  resolveProjectIdentity,
   createPublicState,
 } from '../src/config';
 import * as fs from 'fs';
@@ -187,6 +188,29 @@ describe('config', () => {
       const slug = getRemoteSlug();
       expect(slug).toBeTruthy();
       expect(slug === 'gstack' || /^[a-zA-Z0-9._-]+-[a-zA-Z0-9._-]+$/.test(slug)).toBe(true);
+    });
+
+    test('prefers explicit env overrides', () => {
+      const identity = resolveProjectIdentity(process.cwd(), {
+        GSTACK_REPO_URL: 'https://github.com/mira-332/quality-os',
+        GSTACK_REPO_SLUG: 'mira-332-quality-os',
+      });
+      expect(identity.source).toBe('env');
+      expect(identity.repoUrl).toBe('https://github.com/mira-332/quality-os');
+      expect(identity.repoSlug).toBe('mira-332-quality-os');
+    });
+
+    test('reads Project Identity from CLAUDE.md before origin', () => {
+      const tmpDir = path.join(os.tmpdir(), `browse-identity-test-${Date.now()}`);
+      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'CLAUDE.md'), `# Project\n\n## Project Identity\n- Repository URL: https://github.com/mira-332/quality-os\n- Repository Slug: mira-332-quality-os\n`);
+
+      const identity = resolveProjectIdentity(tmpDir, {});
+      expect(identity.source).toBe('claude');
+      expect(identity.repoUrl).toBe('https://github.com/mira-332/quality-os');
+      expect(identity.repoSlug).toBe('mira-332-quality-os');
+
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
     test('parses SSH remote URLs', () => {

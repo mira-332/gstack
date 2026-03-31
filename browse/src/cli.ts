@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { resolveConfig, ensureStateDir, readVersionHash } from './config';
 import { resolveDefaultTrustFile, verifyRuntimeTrust } from './runtime-trust';
+import { resolveBunInvocation } from '../../scripts/bun-exec';
 
 const config = resolveConfig();
 const IS_WINDOWS = process.platform === 'win32';
@@ -302,7 +303,8 @@ async function startServer(extraEnv?: Record<string, string>): Promise<ServerSta
     Bun.spawnSync(['node', '-e', launcherCode], { stdio: ['ignore', 'ignore', 'ignore'] });
   } else {
     // macOS/Linux: Bun.spawn + unref works correctly
-    proc = Bun.spawn(['bun', 'run', SERVER_SCRIPT], {
+    const bun = resolveBunInvocation(['run', SERVER_SCRIPT]);
+    proc = Bun.spawn([bun.command, ...bun.args], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, BROWSE_STATE_FILE: config.stateFile, ...extraEnv },
     });
@@ -677,7 +679,8 @@ Refs:           After 'snapshot', use @e1, @e2... as selectors:
           spawnSync('pkill', ['-f', 'sidebar-agent\\.ts'], { stdio: 'ignore', timeout: 3000 });
         } catch {}
 
-        const agentProc = Bun.spawn(['bun', 'run', agentScript], {
+        const bun = resolveBunInvocation(['run', agentScript]);
+        const agentProc = Bun.spawn([bun.command, ...bun.args], {
           cwd: config.projectDir,
           env: {
             ...process.env,
@@ -691,7 +694,7 @@ Refs:           After 'snapshot', use @e1, @e2... as selectors:
         console.log(`[browse] Sidebar agent started (PID: ${agentProc.pid})`);
       } catch (err: any) {
         console.error(`[browse] Sidebar agent failed to start: ${err.message}`);
-        console.error(`[browse] Run manually: bun run ${agentScript}`);
+        console.error(`[browse] Run manually: ${resolveBunInvocation(['run', agentScript]).command} run ${agentScript}`);
       }
     } catch (err: any) {
       console.error(`[browse] Connect failed: ${err.message}`);

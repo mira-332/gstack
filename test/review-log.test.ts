@@ -1,24 +1,27 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { execSync, ExecSyncOptionsWithStringEncoding } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { execBashScript } from './helpers/shell';
 
 const ROOT = path.resolve(import.meta.dir, '..');
 const BIN = path.join(ROOT, 'bin');
+const REVIEW_LOG_SCRIPT = path.join(BIN, 'gstack-review-log');
+const describeShell = process.platform === 'win32' && process.env.GSTACK_RUN_SHELL_TESTS !== '1'
+  ? describe.skip
+  : describe;
 
 let tmpDir: string;
 let slugDir: string;
 
 function run(input: string, opts: { expectFail?: boolean } = {}): { stdout: string; exitCode: number } {
-  const execOpts: ExecSyncOptionsWithStringEncoding = {
+  const execOpts = {
     cwd: ROOT,
     env: { ...process.env, GSTACK_HOME: tmpDir },
-    encoding: 'utf-8',
     timeout: 10000,
   };
   try {
-    const stdout = execSync(`${BIN}/gstack-review-log '${input.replace(/'/g, "'\\''")}'`, execOpts).trim();
+    const stdout = execBashScript(REVIEW_LOG_SCRIPT, [input], execOpts);
     return { stdout, exitCode: 0 };
   } catch (e: any) {
     if (opts.expectFail) {
@@ -40,7 +43,7 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('gstack-review-log', () => {
+describeShell('gstack-review-log', () => {
   test('appends valid JSON to review JSONL file', () => {
     const input = '{"skill":"plan-eng-review","status":"clean"}';
     const result = run(input);

@@ -9,6 +9,7 @@ import { spawn, type Subprocess } from 'bun';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { resolveBunInvocation } from '../../scripts/bun-exec';
 
 let serverProc: Subprocess | null = null;
 let serverPort: number = 0;
@@ -16,6 +17,8 @@ let authToken: string = '';
 let tmpDir: string = '';
 let stateFile: string = '';
 let queueFile: string = '';
+const SKIP_SIDEBAR_INTEGRATION = process.platform === 'win32' && process.env.GSTACK_RUN_BROWSER_TESTS !== '1';
+const describeSidebarIntegration = SKIP_SIDEBAR_INTEGRATION ? describe.skip : describe;
 
 async function api(pathname: string, opts: RequestInit & { noAuth?: boolean } = {}): Promise<Response> {
   const { noAuth, ...fetchOpts } = opts;
@@ -30,6 +33,7 @@ async function api(pathname: string, opts: RequestInit & { noAuth?: boolean } = 
 }
 
 beforeAll(async () => {
+  if (SKIP_SIDEBAR_INTEGRATION) return;
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sidebar-integ-'));
   stateFile = path.join(tmpDir, 'browse.json');
   queueFile = path.join(tmpDir, 'sidebar-queue.jsonl');
@@ -38,7 +42,8 @@ beforeAll(async () => {
   fs.mkdirSync(path.dirname(queueFile), { recursive: true });
 
   const serverScript = path.resolve(__dirname, '..', 'src', 'server.ts');
-  serverProc = spawn(['bun', 'run', serverScript], {
+  const bun = resolveBunInvocation(['run', serverScript]);
+  serverProc = spawn([bun.command, ...bun.args], {
     env: {
       ...process.env,
       BROWSE_STATE_FILE: stateFile,
@@ -69,6 +74,7 @@ beforeAll(async () => {
 }, 20000);
 
 afterAll(() => {
+  if (SKIP_SIDEBAR_INTEGRATION) return;
   if (serverProc) { try { serverProc.kill(); } catch {} }
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 });
@@ -79,7 +85,7 @@ async function resetState() {
   fs.writeFileSync(queueFile, '');
 }
 
-describe('sidebar auth', () => {
+describeSidebarIntegration('sidebar auth', () => {
   test('rejects request without auth token', async () => {
     const resp = await api('/sidebar-command', {
       method: 'POST',
@@ -109,7 +115,7 @@ describe('sidebar auth', () => {
   });
 });
 
-describe('sidebar-command → queue', () => {
+describeSidebarIntegration('sidebar-command → queue', () => {
   test('writes queue entry with activeTabUrl', async () => {
     await resetState();
 
@@ -181,7 +187,7 @@ describe('sidebar-command → queue', () => {
   });
 });
 
-describe('sidebar-agent/event → chat buffer', () => {
+describeSidebarIntegration('sidebar-agent/event → chat buffer', () => {
   test('agent events appear in /sidebar-chat', async () => {
     await resetState();
 
@@ -223,7 +229,7 @@ describe('sidebar-agent/event → chat buffer', () => {
   });
 });
 
-describe('message queuing', () => {
+describeSidebarIntegration('message queuing', () => {
   test('queues message when agent is processing', async () => {
     await resetState();
 
@@ -274,7 +280,7 @@ describe('message queuing', () => {
   });
 });
 
-describe('chat clear', () => {
+describeSidebarIntegration('chat clear', () => {
   test('clears chat buffer', async () => {
     await resetState();
     // Add some entries
@@ -291,7 +297,7 @@ describe('chat clear', () => {
   });
 });
 
-describe('agent kill', () => {
+describeSidebarIntegration('agent kill', () => {
   test('kill adds error entry and returns to idle', async () => {
     await resetState();
 

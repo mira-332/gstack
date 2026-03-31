@@ -9,26 +9,24 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { spawnBashScript } from '../../test/helpers/shell';
 
 const SCRIPT = join(import.meta.dir, '..', '..', 'bin', 'gstack-config');
+const describeShell = process.platform === 'win32' && process.env.GSTACK_RUN_SHELL_TESTS !== '1'
+  ? describe.skip
+  : describe;
 
 let stateDir: string;
 
 function run(args: string[] = [], extraEnv: Record<string, string> = {}) {
-  const result = Bun.spawnSync(['bash', SCRIPT, ...args], {
+  const result = spawnBashScript(SCRIPT, args, {
     env: {
       ...process.env,
       GSTACK_STATE_DIR: stateDir,
       ...extraEnv,
     },
-    stdout: 'pipe',
-    stderr: 'pipe',
   });
-  return {
-    exitCode: result.exitCode,
-    stdout: result.stdout.toString().trim(),
-    stderr: result.stderr.toString().trim(),
-  };
+  return result;
 }
 
 beforeEach(() => {
@@ -39,7 +37,7 @@ afterEach(() => {
   rmSync(stateDir, { recursive: true, force: true });
 });
 
-describe('gstack-config', () => {
+describeShell('gstack-config', () => {
   // ─── get ──────────────────────────────────────────────────
   test('get on missing file returns empty, exit 0', () => {
     const { exitCode, stdout } = run(['get', 'auto_upgrade']);

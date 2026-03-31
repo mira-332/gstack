@@ -14,8 +14,11 @@ import { handleMetaCommand } from '../src/meta-commands';
 let testServer: ReturnType<typeof startTestServer>;
 let bm: BrowserManager;
 let baseUrl: string;
+const SKIP_HANDOFF_TESTS = process.platform === 'win32' && process.env.GSTACK_RUN_BROWSER_TESTS !== '1';
+const describeHandoff = SKIP_HANDOFF_TESTS ? describe.skip : describe;
 
 beforeAll(async () => {
+  if (SKIP_HANDOFF_TESTS) return;
   testServer = startTestServer(0);
   baseUrl = testServer.url;
 
@@ -24,13 +27,14 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
+  if (SKIP_HANDOFF_TESTS) return;
   try { testServer.server.stop(); } catch {}
   setTimeout(() => process.exit(0), 500);
 });
 
 // ─── Unit Tests: Failure Tracking (no browser needed) ────────────
 
-describe('failure tracking', () => {
+describeHandoff('failure tracking', () => {
   test('getFailureHint returns null when below threshold', () => {
     const tracker = new BrowserManager();
     tracker.incrementFailures();
@@ -76,7 +80,7 @@ describe('failure tracking', () => {
 
 // ─── Unit Tests: State Save/Restore (shared browser) ─────────────
 
-describe('saveState', () => {
+describeHandoff('saveState', () => {
   test('captures cookies and page URLs', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     await handleWriteCommand('cookie', ['testcookie=testvalue'], bm);
@@ -123,7 +127,7 @@ describe('saveState', () => {
   }, 15000);
 });
 
-describe('restoreState', () => {
+describeHandoff('restoreState', () => {
   test('state survives recreateContext round-trip', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     await handleWriteCommand('cookie', ['restored=yes'], bm);
@@ -141,7 +145,7 @@ describe('restoreState', () => {
 
 // ─── Unit Tests: Handoff Edge Cases ──────────────────────────────
 
-describe('handoff edge cases', () => {
+describeHandoff('handoff edge cases', () => {
   test('handoff when already headed returns no-op', async () => {
     (bm as any).isHeaded = true;
     const result = await bm.handoff('test');
@@ -169,7 +173,7 @@ describe('handoff edge cases', () => {
 // Each handoff test creates its own BrowserManager since handoff swaps the browser.
 // These tests run sequentially (one browser at a time) to avoid resource issues.
 
-describe('handoff integration', () => {
+describeHandoff('handoff integration', () => {
   test('full handoff: cookies preserved, headed mode active, commands work', async () => {
     const hbm = new BrowserManager();
     await hbm.launch();

@@ -7,17 +7,21 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync, mkdirSync, symlinkSync, utimesSync } from 'fs';
+import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync, mkdirSync, copyFileSync, chmodSync, utimesSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { spawnBashScript } from '../../test/helpers/shell';
 
 const SCRIPT = join(import.meta.dir, '..', '..', 'bin', 'gstack-update-check');
+const describeShell = process.platform === 'win32' && process.env.GSTACK_RUN_SHELL_TESTS !== '1'
+  ? describe.skip
+  : describe;
 
 let gstackDir: string;
 let stateDir: string;
 
 function run(extraEnv: Record<string, string> = {}, args: string[] = []) {
-  const result = Bun.spawnSync(['bash', SCRIPT, ...args], {
+  const result = spawnBashScript(SCRIPT, args, {
     env: {
       ...process.env,
       GSTACK_DIR: gstackDir,
@@ -25,23 +29,19 @@ function run(extraEnv: Record<string, string> = {}, args: string[] = []) {
       GSTACK_REMOTE_URL: `file://${join(gstackDir, 'REMOTE_VERSION')}`,
       ...extraEnv,
     },
-    stdout: 'pipe',
-    stderr: 'pipe',
   });
-  return {
-    exitCode: result.exitCode,
-    stdout: result.stdout.toString().trim(),
-    stderr: result.stderr.toString().trim(),
-  };
+  return result;
 }
 
 beforeEach(() => {
   gstackDir = mkdtempSync(join(tmpdir(), 'gstack-upd-test-'));
   stateDir = mkdtempSync(join(tmpdir(), 'gstack-state-test-'));
-  // Link real gstack-config so update_check config check works
+  // Copy real gstack-config so update_check config check works on Windows
   const binDir = join(gstackDir, 'bin');
   mkdirSync(binDir);
-  symlinkSync(join(import.meta.dir, '..', '..', 'bin', 'gstack-config'), join(binDir, 'gstack-config'));
+  const configPath = join(binDir, 'gstack-config');
+  copyFileSync(join(import.meta.dir, '..', '..', 'bin', 'gstack-config'), configPath);
+  chmodSync(configPath, 0o755);
 });
 
 afterEach(() => {
@@ -61,7 +61,7 @@ function nowEpoch(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-describe('gstack-update-check', () => {
+describeShell('gstack-update-check', () => {
   // ─── Path A: No VERSION file ────────────────────────────────
   test('exits 0 with no output when VERSION file is missing', () => {
     const { exitCode, stdout } = run();

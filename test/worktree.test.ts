@@ -12,13 +12,19 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { resolveGitExecutable } from '../scripts/bun-exec';
+
+const GIT = resolveGitExecutable();
+const describeShell = process.platform === 'win32' && process.env.GSTACK_RUN_SHELL_TESTS !== '1'
+  ? describe.skip
+  : describe;
 
 /** Create a minimal git repo in a tmpdir for testing. */
 function createTestRepo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'worktree-test-'));
-  spawnSync('git', ['init'], { cwd: dir, stdio: 'pipe' });
-  spawnSync('git', ['config', 'user.email', 'test@test.com'], { cwd: dir, stdio: 'pipe' });
-  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: dir, stdio: 'pipe' });
+  spawnSync(GIT, ['init'], { cwd: dir, stdio: 'pipe' });
+  spawnSync(GIT, ['config', 'user.email', 'test@test.com'], { cwd: dir, stdio: 'pipe' });
+  spawnSync(GIT, ['config', 'user.name', 'Test'], { cwd: dir, stdio: 'pipe' });
 
   // Create initial commit so HEAD exists
   fs.writeFileSync(path.join(dir, 'README.md'), '# Test repo\n');
@@ -31,8 +37,8 @@ function createTestRepo(): string {
   fs.mkdirSync(path.join(dir, 'browse', 'dist'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'browse', 'dist', 'browse'), '#!/bin/sh\necho browse\n');
 
-  spawnSync('git', ['add', 'README.md', '.gitignore'], { cwd: dir, stdio: 'pipe' });
-  spawnSync('git', ['commit', '-m', 'Initial commit'], { cwd: dir, stdio: 'pipe' });
+  spawnSync(GIT, ['add', 'README.md', '.gitignore'], { cwd: dir, stdio: 'pipe' });
+  spawnSync(GIT, ['commit', '-m', 'Initial commit'], { cwd: dir, stdio: 'pipe' });
 
   return dir;
 }
@@ -40,7 +46,7 @@ function createTestRepo(): string {
 /** Clean up a test repo. */
 function cleanupRepo(dir: string): void {
   // Prune worktrees first to avoid git lock issues
-  spawnSync('git', ['worktree', 'prune'], { cwd: dir, stdio: 'pipe' });
+  spawnSync(GIT, ['worktree', 'prune'], { cwd: dir, stdio: 'pipe' });
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
@@ -59,7 +65,7 @@ afterEach(() => {
   try { fs.unlinkSync(DEDUP_PATH); } catch { /* may not exist */ }
 });
 
-describe('WorktreeManager', () => {
+describeShell('WorktreeManager', () => {
 
   test('create() produces a valid worktree at the expected path', () => {
     const repo = createTestRepo();
@@ -94,7 +100,7 @@ describe('WorktreeManager', () => {
     repos.push(repo);
     const mgr = new WorktreeManager(repo);
 
-    const expectedSha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, stdio: 'pipe' })
+    const expectedSha = spawnSync(GIT, ['rev-parse', 'HEAD'], { cwd: repo, stdio: 'pipe' })
       .stdout.toString().trim();
 
     mgr.create('test-sha');
@@ -154,8 +160,8 @@ describe('WorktreeManager', () => {
 
     // Make a commit in the worktree (simulating agent running git commit)
     fs.writeFileSync(path.join(worktreePath, 'committed.txt'), 'Agent committed this\n');
-    spawnSync('git', ['add', 'committed.txt'], { cwd: worktreePath, stdio: 'pipe' });
-    spawnSync('git', ['commit', '-m', 'Agent commit'], { cwd: worktreePath, stdio: 'pipe' });
+    spawnSync(GIT, ['add', 'committed.txt'], { cwd: worktreePath, stdio: 'pipe' });
+    spawnSync(GIT, ['commit', '-m', 'Agent commit'], { cwd: worktreePath, stdio: 'pipe' });
 
     const result = mgr.harvest('test-harvest-commit');
 
@@ -228,7 +234,7 @@ describe('WorktreeManager', () => {
     expect(fs.existsSync(oldPath)).toBe(true);
 
     // Remove via git but leave directory (simulating a crash)
-    spawnSync('git', ['worktree', 'remove', '--force', oldPath], { cwd: repo, stdio: 'pipe' });
+    spawnSync(GIT, ['worktree', 'remove', '--force', oldPath], { cwd: repo, stdio: 'pipe' });
     // Recreate the directory to simulate orphaned state
     fs.mkdirSync(oldPath, { recursive: true });
 

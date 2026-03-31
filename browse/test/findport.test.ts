@@ -1,8 +1,14 @@
 import { describe, test, expect } from 'bun:test';
 import * as net from 'net';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
+import { resolveNodeExecutable } from '../../scripts/bun-exec';
 
 const polyfillPath = path.resolve(import.meta.dir, '../src/bun-polyfill.cjs');
+const NODE = resolveNodeExecutable();
+const describeFindPort = process.platform === 'win32' && process.env.GSTACK_RUN_SHELL_TESTS !== '1'
+  ? describe.skip
+  : describe;
 
 // Helper: bind a port and hold it open, returning a cleanup function
 function occupyPort(port: number): Promise<() => Promise<void>> {
@@ -27,7 +33,7 @@ function getFreePort(): Promise<number> {
   });
 }
 
-describe('findPort / isPortAvailable', () => {
+describeFindPort('findPort / isPortAvailable', () => {
 
   test('isPortAvailable returns true for a free port', async () => {
     // Use the same isPortAvailable logic from server.ts
@@ -98,7 +104,7 @@ describe('findPort / isPortAvailable', () => {
     // to actually close — this is the root cause of the race condition.
     // On macOS/Linux the OS reclaims the port fast enough that the race
     // rarely manifests, but on Windows TIME_WAIT makes it 100% repro.
-    const result = Bun.spawnSync(['node', '-e', `
+    const result = spawnSync(NODE, ['-e', `
       require('${polyfillPath}');
       const net = require('net');
 
@@ -118,9 +124,9 @@ describe('findPort / isPortAvailable', () => {
       }
 
       test();
-    `], { stdout: 'pipe', stderr: 'pipe' });
+    `], { stdio: 'pipe' });
 
-    const output = result.stdout.toString().trim();
+    const output = result.stdout?.toString().trim() ?? '';
     // Confirms the polyfill's stop() is fire-and-forget — callers
     // cannot wait for the port to be released, hence the race
     expect(output).toBe('FIRE_AND_FORGET');
@@ -129,7 +135,7 @@ describe('findPort / isPortAvailable', () => {
   test('net.createServer approach does not have the race condition', async () => {
     // Prove the fix: net.createServer with proper async bind/close
     // releases the port cleanly
-    const result = Bun.spawnSync(['node', '-e', `
+    const result = spawnSync(NODE, ['-e', `
       const net = require('net');
 
       async function testFix() {
@@ -163,9 +169,9 @@ describe('findPort / isPortAvailable', () => {
       }
 
       testFix();
-    `], { stdout: 'pipe', stderr: 'pipe' });
+    `], { stdio: 'pipe' });
 
-    const output = result.stdout.toString().trim();
+    const output = result.stdout?.toString().trim() ?? '';
     expect(output).toBe('FIX_WORKS');
   });
 

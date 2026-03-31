@@ -8,7 +8,8 @@
 
 import { validateSkill } from '../test/helpers/skill-parser';
 import { discoverTemplates } from './discover-skills';
-import { execSync } from 'child_process';
+import { resolveBunInvocation } from './bun-exec';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -22,7 +23,12 @@ const TEMPLATES = discoverTemplates(ROOT).map(t => ({
 function regenerateAndValidate() {
   // Regenerate
   try {
-    execSync('bun run scripts/gen-skill-docs.ts', { cwd: ROOT, stdio: 'pipe' });
+    const bun = resolveBunInvocation(['run', 'scripts/gen-skill-docs.ts']);
+    execFileSync(bun.command, bun.args, {
+      cwd: ROOT,
+      stdio: 'pipe',
+      env: process.env,
+    });
   } catch (err: any) {
     console.log(`  [gen]   ERROR: ${err.stderr?.toString().trim() || err.message}`);
     return;

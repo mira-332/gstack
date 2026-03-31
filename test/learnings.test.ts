@@ -1,25 +1,29 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { execSync, ExecSyncOptionsWithStringEncoding } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { execBashScript } from './helpers/shell';
 
 const ROOT = path.resolve(import.meta.dir, '..');
 const BIN = path.join(ROOT, 'bin');
+const LOG_SCRIPT = path.join(BIN, 'gstack-learnings-log');
+const SEARCH_SCRIPT = path.join(BIN, 'gstack-learnings-search');
+const describeShell = process.platform === 'win32' && process.env.GSTACK_RUN_SHELL_TESTS !== '1'
+  ? describe.skip
+  : describe;
 
 let tmpDir: string;
 let slugDir: string;
 let learningsFile: string;
 
 function runLog(input: string, opts: { expectFail?: boolean } = {}): { stdout: string; exitCode: number } {
-  const execOpts: ExecSyncOptionsWithStringEncoding = {
+  const execOpts = {
     cwd: ROOT,
     env: { ...process.env, GSTACK_HOME: tmpDir },
-    encoding: 'utf-8',
     timeout: 15000,
   };
   try {
-    const stdout = execSync(`${BIN}/gstack-learnings-log '${input.replace(/'/g, "'\\''")}'`, execOpts).trim();
+    const stdout = execBashScript(LOG_SCRIPT, [input], execOpts);
     return { stdout, exitCode: 0 };
   } catch (e: any) {
     if (opts.expectFail) {
@@ -30,14 +34,14 @@ function runLog(input: string, opts: { expectFail?: boolean } = {}): { stdout: s
 }
 
 function runSearch(args: string = ''): string {
-  const execOpts: ExecSyncOptionsWithStringEncoding = {
+  const execOpts = {
     cwd: ROOT,
     env: { ...process.env, GSTACK_HOME: tmpDir },
-    encoding: 'utf-8',
     timeout: 15000,
   };
   try {
-    return execSync(`${BIN}/gstack-learnings-search ${args}`, execOpts).trim();
+    const parsedArgs = args.match(/\S+/g) ?? [];
+    return execBashScript(SEARCH_SCRIPT, parsedArgs, execOpts);
   } catch {
     return '';
   }
@@ -60,7 +64,7 @@ function findLearningsFile(): string | null {
   return fs.existsSync(f) ? f : null;
 }
 
-describe('gstack-learnings-log', () => {
+describeShell('gstack-learnings-log', () => {
   test('appends valid JSON to learnings.jsonl', () => {
     const input = '{"skill":"review","type":"pattern","key":"test-key","insight":"test insight","confidence":8,"source":"observed"}';
     const result = runLog(input);
@@ -104,7 +108,7 @@ describe('gstack-learnings-log', () => {
   });
 });
 
-describe('gstack-learnings-search', () => {
+describeShell('gstack-learnings-search', () => {
   test('returns empty and exits 0 when no learnings file exists', () => {
     const output = runSearch();
     expect(output).toBe('');
@@ -192,7 +196,7 @@ describe('gstack-learnings-search', () => {
   });
 });
 
-describe('gstack-learnings-log edge cases', () => {
+describeShell('gstack-learnings-log edge cases', () => {
   test('preserves existing timestamp when ts is present', () => {
     const input = '{"skill":"review","type":"pattern","key":"ts-preserve","insight":"test","confidence":5,"source":"observed","ts":"2025-06-15T10:00:00Z"}';
     runLog(input);
@@ -225,7 +229,7 @@ describe('gstack-learnings-log edge cases', () => {
   });
 });
 
-describe('gstack-learnings-search edge cases', () => {
+describeShell('gstack-learnings-search edge cases', () => {
   test('sorts by confidence then recency', () => {
     // Two entries: one high confidence old, one lower confidence recent
     runLog(JSON.stringify({ skill: 'review', type: 'pattern', key: 'high-conf', insight: 'high confidence entry', confidence: 9, source: 'user-stated', ts: '2026-01-01T00:00:00Z' }));

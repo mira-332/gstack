@@ -28,19 +28,31 @@ export function locateBinary(): string | null {
   const root = getGitRoot();
   const home = homedir();
   const markers = ['.codex', '.agents', '.claude'];
+  const binaryNames = process.platform === 'win32'
+    ? ['browse.exe', 'browse']
+    : ['browse', 'browse.exe'];
 
   // Workspace-local takes priority (for development)
   if (root) {
+    for (const binaryName of binaryNames) {
+      const devTree = join(root, 'browse', 'dist', binaryName);
+      if (existsSync(devTree)) return devTree;
+    }
+
     for (const m of markers) {
-      const local = join(root, m, 'skills', 'gstack', 'browse', 'dist', 'browse');
-      if (existsSync(local)) return local;
+      for (const binaryName of binaryNames) {
+        const local = join(root, m, 'skills', 'gstack', 'browse', 'dist', binaryName);
+        if (existsSync(local)) return local;
+      }
     }
   }
 
   // Global fallback
   for (const m of markers) {
-    const global = join(home, m, 'skills', 'gstack', 'browse', 'dist', 'browse');
-    if (existsSync(global)) return global;
+    for (const binaryName of binaryNames) {
+      const global = join(home, m, 'skills', 'gstack', 'browse', 'dist', binaryName);
+      if (existsSync(global)) return global;
+    }
   }
 
   return null;
@@ -58,4 +70,6 @@ function main() {
   console.log(bin);
 }
 
-main();
+if (import.meta.main) {
+  main();
+}

@@ -112,7 +112,10 @@ if [ ! -f ~/.gstack/projects/$SLUG/land-deploy-confirmed ]; then
 else
   # Check if deploy config has changed since confirmation
   SAVED_HASH=$(cat ~/.gstack/projects/$SLUG/land-deploy-confirmed 2>/dev/null)
-  CURRENT_HASH=$(sed -n '/## Deploy Configuration/,/^## /p' CLAUDE.md 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+  CURRENT_HASH=$( {
+    sed -n '/## Project Identity/,/^## /p' CLAUDE.md 2>/dev/null
+    sed -n '/## Deploy Configuration/,/^## /p' CLAUDE.md 2>/dev/null
+  } | shasum -a 256 | cut -d' ' -f1)
   # Also hash workflow files that affect deploy behavior
   WORKFLOW_HASH=$(find .github/workflows -maxdepth 1 \( -name '*deploy*' -o -name '*cd*' \) 2>/dev/null | xargs cat 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
   COMBINED_HASH="${CURRENT_HASH}-${WORKFLOW_HASH}"
@@ -217,7 +220,7 @@ CLI to verify the deploy worked."
 
 Check for staging environments in this order:
 
-1. **CLAUDE.md persisted config:** Check for a staging URL in the Deploy Configuration section:
+1. **CLAUDE.md persisted config:** Check for a staging URL in the Project Identity / Deploy Configuration sections:
 ```bash
 grep -i "staging" CLAUDE.md 2>/dev/null | head -3
 ```
@@ -273,7 +276,10 @@ Present the full dry-run results to the user via AskUserQuestion:
 Save the deploy config fingerprint so we can detect future changes:
 ```bash
 mkdir -p ~/.gstack/projects/$SLUG
-CURRENT_HASH=$(sed -n '/## Deploy Configuration/,/^## /p' CLAUDE.md 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+CURRENT_HASH=$( {
+  sed -n '/## Project Identity/,/^## /p' CLAUDE.md 2>/dev/null
+  sed -n '/## Deploy Configuration/,/^## /p' CLAUDE.md 2>/dev/null
+} | shasum -a 256 | cut -d' ' -f1)
 WORKFLOW_HASH=$(find .github/workflows -maxdepth 1 \( -name '*deploy*' -o -name '*cd*' \) 2>/dev/null | xargs cat 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
 echo "${CURRENT_HASH}-${WORKFLOW_HASH}" > ~/.gstack/projects/$SLUG/land-deploy-confirmed
 ```

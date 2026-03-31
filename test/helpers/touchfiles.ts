@@ -7,6 +7,9 @@
  */
 
 import { spawnSync } from 'child_process';
+import { resolveGitExecutable } from '../../scripts/bun-exec';
+
+const GIT = resolveGitExecutable();
 
 // --- Glob matching ---
 
@@ -367,7 +370,7 @@ export const GLOBAL_TOUCHFILES = [
  */
 export function detectBaseBranch(cwd: string): string | null {
   for (const ref of ['origin/main', 'origin/master', 'main', 'master']) {
-    const result = spawnSync('git', ['rev-parse', '--verify', ref], {
+    const result = spawnSync(GIT, ['rev-parse', '--verify', ref], {
       cwd, stdio: 'pipe', timeout: 3000,
     });
     if (result.status === 0) return ref;
@@ -379,7 +382,7 @@ export function detectBaseBranch(cwd: string): string | null {
  * Get list of files changed between base branch and HEAD.
  */
 export function getChangedFiles(baseBranch: string, cwd: string): string[] {
-  const result = spawnSync('git', ['diff', '--name-only', `${baseBranch}...HEAD`], {
+  const result = spawnSync(GIT, ['diff', '--name-only', `${baseBranch}...HEAD`], {
     cwd, stdio: 'pipe', timeout: 5000,
   });
   if (result.status !== 0) return [];

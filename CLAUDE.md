@@ -1,5 +1,9 @@
 # gstack development
 
+## Project Identity
+- Repository URL: https://github.com/mira-332/quality-os
+- Repository Slug: mira-332-quality-os
+
 ## Commands
 
 ```bash

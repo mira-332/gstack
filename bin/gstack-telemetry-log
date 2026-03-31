@@ -144,8 +144,14 @@ fi
 REPO_SLUG=""
 BRANCH=""
 if command -v git >/dev/null 2>&1; then
-  REPO_SLUG="$(git remote get-url origin 2>/dev/null | sed 's|.*[:/]\([^/]*/[^/]*\)\.git$|\1|;s|.*[:/]\([^/]*/[^/]*\)$|\1|' | tr '/' '-' 2>/dev/null || true)"
   BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+fi
+if [ -x "$GSTACK_DIR/bin/gstack-project-identity" ]; then
+  eval "$("$GSTACK_DIR/bin/gstack-project-identity" 2>/dev/null || true)"
+  REPO_SLUG="${GSTACK_REPO_SLUG:-$REPO_SLUG}"
+fi
+if [ -z "$REPO_SLUG" ] && command -v git >/dev/null 2>&1; then
+  REPO_SLUG="$(git remote get-url origin 2>/dev/null | sed 's|.*[:/]\([^/]*/[^/]*\)\.git$|\1|;s|.*[:/]\([^/]*/[^/]*\)$|\1|' | tr '/' '-' 2>/dev/null || true)"
 fi
 
 # ─── Construct and append JSON ───────────────────────────────

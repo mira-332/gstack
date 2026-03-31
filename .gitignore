@@ -24,5 +24,8 @@ quality-os-work/
 !.env.example
 supabase/.temp/
 bin/gstack-global-discover.exe
+cli.exe
+find-browse.exe
+gstack-global-discover.exe
 browse/test/fixtures/test-cookies.db
 browse/test/fixtures/test-cookies-linux.db

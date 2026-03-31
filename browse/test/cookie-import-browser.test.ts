@@ -35,6 +35,7 @@ const CHROMIUM_EPOCH_OFFSET = 11644473600000000n;
 const FIXTURE_DIR = path.join(import.meta.dir, 'fixtures');
 const FIXTURE_DB = path.join(FIXTURE_DIR, 'test-cookies.db');
 const LINUX_FIXTURE_DB = path.join(FIXTURE_DIR, 'test-cookies-linux.db');
+const testLinuxProfiles = process.platform === 'win32' ? test.skip : test;
 
 // ─── Encryption Helper ──────────────────────────────────────────
 
@@ -429,7 +430,7 @@ describe('Cookie Import Browser', () => {
       }
     });
 
-    test('detects linux-style Chromium profiles under ~/.config', async () => {
+    testLinuxProfiles('detects linux-style Chromium profiles under ~/.config', async () => {
       await withInstalledProfile('.config/chromium', LINUX_FIXTURE_DB, async () => {
         const browsers = findInstalledBrowsers();
         const names = browsers.map((browser: any) => browser.name);
@@ -440,7 +441,7 @@ describe('Cookie Import Browser', () => {
   });
 
   describe('Real Profile Imports', () => {
-    test('imports Linux v10 cookies from ~/.config/chromium', async () => {
+    testLinuxProfiles('imports Linux v10 cookies from ~/.config/chromium', async () => {
       await withInstalledProfile('.config/chromium', LINUX_FIXTURE_DB, async () => {
         const result = await importCookies('chromium', ['.linux-v10.com'], 'GstackLinuxV10');
 
@@ -451,7 +452,7 @@ describe('Cookie Import Browser', () => {
       }, 'GstackLinuxV10');
     });
 
-    test('imports Linux v11 cookies when secret-tool returns a key', async () => {
+    testLinuxProfiles('imports Linux v11 cookies when secret-tool returns a key', async () => {
       await withInstalledProfile('.config/chromium', LINUX_FIXTURE_DB, async () => {
         const result = await importCookies('chromium', ['.linux-v11.com'], 'GstackLinuxV11');
 
@@ -462,7 +463,7 @@ describe('Cookie Import Browser', () => {
       }, 'GstackLinuxV11');
     });
 
-    test('lists domains from Linux Chromium profiles', async () => {
+    testLinuxProfiles('lists domains from Linux Chromium profiles', async () => {
       await withInstalledProfile('.config/chromium', LINUX_FIXTURE_DB, async () => {
         const result = listDomains('chromium', 'GstackLinuxDomains');
         const domains = result.domains.map((entry: any) => entry.domain);

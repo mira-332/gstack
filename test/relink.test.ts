@@ -1,25 +1,27 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { execBashScript } from './helpers/shell';
 
 const ROOT = path.resolve(import.meta.dir, '..');
 const BIN = path.join(ROOT, 'bin');
+const describeShell = process.platform === 'win32' && process.env.GSTACK_RUN_SHELL_TESTS !== '1'
+  ? describe.skip
+  : describe;
 
 let tmpDir: string;
 let skillsDir: string;
 let installDir: string;
 
-function run(cmd: string, env: Record<string, string> = {}, expectFail = false): string {
+function run(scriptPath: string, args: string[] = [], env: Record<string, string> = {}, expectFail = false): string {
   try {
-    return execSync(cmd, {
+    return execBashScript(scriptPath, args, {
       cwd: ROOT,
       env: { ...process.env, GSTACK_STATE_DIR: tmpDir, ...env },
-      encoding: 'utf-8',
       timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
+    });
   } catch (e: any) {
     if (expectFail) return (e.stderr || e.stdout || '').toString().trim();
     throw e;
@@ -58,14 +60,14 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('gstack-relink (#578)', () => {
+describeShell('gstack-relink (#578)', () => {
   // Test 11: prefixed symlinks when skill_prefix=true
   test('creates gstack-* symlinks when skill_prefix=true', () => {
     setupMockInstall(['qa', 'ship', 'review']);
     // Set config to prefix mode
-    run(`${path.join(installDir, 'bin', 'gstack-config')} set skill_prefix true`);
+    run(path.join(installDir, 'bin', 'gstack-config'), ['set', 'skill_prefix', 'true']);
     // Run relink with env pointing to the mock install
-    const output = run(`${path.join(installDir, 'bin', 'gstack-relink')}`, {
+    const output = run(path.join(installDir, 'bin', 'gstack-relink'), [], {
       GSTACK_INSTALL_DIR: installDir,
       GSTACK_SKILLS_DIR: skillsDir,
     });
@@ -79,8 +81,8 @@ describe('gstack-relink (#578)', () => {
   // Test 12: flat symlinks when skill_prefix=false
   test('creates flat symlinks when skill_prefix=false', () => {
     setupMockInstall(['qa', 'ship', 'review']);
-    run(`${path.join(installDir, 'bin', 'gstack-config')} set skill_prefix false`);
-    const output = run(`${path.join(installDir, 'bin', 'gstack-relink')}`, {
+    run(path.join(installDir, 'bin', 'gstack-config'), ['set', 'skill_prefix', 'false']);
+    const output = run(path.join(installDir, 'bin', 'gstack-relink'), [], {
       GSTACK_INSTALL_DIR: installDir,
       GSTACK_SKILLS_DIR: skillsDir,
     });
@@ -94,16 +96,16 @@ describe('gstack-relink (#578)', () => {
   test('cleans up stale symlinks from opposite mode', () => {
     setupMockInstall(['qa', 'ship']);
     // Create prefixed symlinks first
-    run(`${path.join(installDir, 'bin', 'gstack-config')} set skill_prefix true`);
-    run(`${path.join(installDir, 'bin', 'gstack-relink')}`, {
+    run(path.join(installDir, 'bin', 'gstack-config'), ['set', 'skill_prefix', 'true']);
+    run(path.join(installDir, 'bin', 'gstack-relink'), [], {
       GSTACK_INSTALL_DIR: installDir,
       GSTACK_SKILLS_DIR: skillsDir,
     });
     expect(fs.existsSync(path.join(skillsDir, 'gstack-qa'))).toBe(true);
 
     // Switch to flat mode
-    run(`${path.join(installDir, 'bin', 'gstack-config')} set skill_prefix false`);
-    run(`${path.join(installDir, 'bin', 'gstack-relink')}`, {
+    run(path.join(installDir, 'bin', 'gstack-config'), ['set', 'skill_prefix', 'false']);
+    run(path.join(installDir, 'bin', 'gstack-relink'), [], {
       GSTACK_INSTALL_DIR: installDir,
       GSTACK_SKILLS_DIR: skillsDir,
     });
@@ -115,7 +117,7 @@ describe('gstack-relink (#578)', () => {
 
   // Test 14: error when install dir missing
   test('prints error when install dir missing', () => {
-    const output = run(`${BIN}/gstack-relink`, {
+    const output = run(path.join(BIN, 'gstack-relink'), [], {
       GSTACK_INSTALL_DIR: '/nonexistent/path/gstack',
       GSTACK_SKILLS_DIR: '/nonexistent/path/skills',
     }, true);
@@ -125,8 +127,8 @@ describe('gstack-relink (#578)', () => {
   // Test: gstack-upgrade does NOT get double-prefixed
   test('does not double-prefix gstack-upgrade directory', () => {
     setupMockInstall(['qa', 'ship', 'gstack-upgrade']);
-    run(`${path.join(installDir, 'bin', 'gstack-config')} set skill_prefix true`);
-    run(`${path.join(installDir, 'bin', 'gstack-relink')}`, {
+    run(path.join(installDir, 'bin', 'gstack-config'), ['set', 'skill_prefix', 'true']);
+    run(path.join(installDir, 'bin', 'gstack-relink'), [], {
       GSTACK_INSTALL_DIR: installDir,
       GSTACK_SKILLS_DIR: skillsDir,
     });
@@ -141,7 +143,7 @@ describe('gstack-relink (#578)', () => {
   test('gstack-config set skill_prefix triggers relink', () => {
     setupMockInstall(['qa', 'ship']);
     // Run gstack-config set which should auto-trigger relink
-    run(`${path.join(installDir, 'bin', 'gstack-config')} set skill_prefix true`, {
+    run(path.join(installDir, 'bin', 'gstack-config'), ['set', 'skill_prefix', 'true'], {
       GSTACK_INSTALL_DIR: installDir,
       GSTACK_SKILLS_DIR: skillsDir,
     });

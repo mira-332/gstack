@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# gstack-project-identity — resolve canonical repo URL and slug for the current project.
+#
+# Resolution order:
+#   1. Explicit env overrides
+#   2. CLAUDE.md Project Identity section
+#   3. CLAUDE.md Deploy Configuration section
+#   4. git remote origin
+#   5. current directory basename
+#
+# Output is shell-escaped assignments so callers can `eval` the result safely.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="${GSTACK_PROJECT_ROOT:-$(git -C "$SCRIPT_DIR/.." rev-parse --show-toplevel 2>/dev/null || pwd)}"
+CLAUDE_FILE="${GSTACK_CLAUDE_FILE:-$ROOT/CLAUDE.md}"
+
+section_block() {
+  local heading="$1"
+  if [ -f "$CLAUDE_FILE" ]; then
+    sed -n "/^## ${heading}$/,/^## /p" "$CLAUDE_FILE" 2>/dev/null || true
+  fi
+}
+
+field_from_block() {
+  local block="$1"
+  local label="$2"
+  printf '%s\n' "$block" | sed -n "s/^[[:space:]]*-[[:space:]]*${label}:[[:space:]]*//p" | head -1
+}
+
+slug_from_url() {
+  local url="$1"
+  url="${url%.git}"
+  if [[ "$url" =~ [:/]([^/]+)/([^/]+)$ ]]; then
+    printf '%s-%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+  fi
+}
+
+REPO_URL="${GSTACK_REPO_URL:-${BROWSE_REPO_URL:-}}"
+REPO_SLUG="${GSTACK_REPO_SLUG:-${BROWSE_REPO_SLUG:-}}"
+
+if [ -f "$CLAUDE_FILE" ]; then
+  PROJECT_BLOCK="$(section_block 'Project Identity')"
+  DEPLOY_BLOCK="$(section_block 'Deploy Configuration')"
+
+  if [ -z "$REPO_URL" ]; then
+    REPO_URL="$(field_from_block "$PROJECT_BLOCK" 'Repository URL')"
+    [ -z "$REPO_URL" ] && REPO_URL="$(field_from_block "$DEPLOY_BLOCK" 'Repository URL')"
+  fi
+
+  if [ -z "$REPO_SLUG" ]; then
+    REPO_SLUG="$(field_from_block "$PROJECT_BLOCK" 'Repository Slug')"
+    [ -z "$REPO_SLUG" ] && REPO_SLUG="$(field_from_block "$DEPLOY_BLOCK" 'Repository Slug')"
+  fi
+fi
+
+if [ -z "$REPO_SLUG" ] && [ -n "$REPO_URL" ]; then
+  REPO_SLUG="$(slug_from_url "$REPO_URL")"
+fi
+
+if [ -z "$REPO_URL" ] || [ -z "$REPO_SLUG" ]; then
+  ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
+  if [ -z "$REPO_URL" ] && [ -n "$ORIGIN_URL" ]; then
+    REPO_URL="$ORIGIN_URL"
+  fi
+  if [ -z "$REPO_SLUG" ] && [ -n "$ORIGIN_URL" ]; then
+    REPO_SLUG="$(slug_from_url "$ORIGIN_URL")"
+  fi
+fi
+
+if [ -z "$REPO_SLUG" ]; then
+  REPO_SLUG="$(basename "$ROOT" | tr -cd 'a-zA-Z0-9._-')"
+fi
+
+REPO_SLUG="$(printf '%s' "$REPO_SLUG" | tr -cd 'a-zA-Z0-9._-')"
+
+printf 'GSTACK_REPO_URL=%q\n' "${REPO_URL:-}"
+printf 'GSTACK_REPO_SLUG=%q\n' "${REPO_SLUG:-}"
+printf 'GSTACK_PROJECT_ROOT=%q\n' "$ROOT"

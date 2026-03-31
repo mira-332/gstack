@@ -3,13 +3,17 @@ import { spawnSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { BASH } from './helpers/shell';
 
 const ROOT = path.resolve(import.meta.dir, '..');
 const CAREFUL_SCRIPT = path.join(ROOT, 'careful', 'bin', 'check-careful.sh');
 const FREEZE_SCRIPT = path.join(ROOT, 'freeze', 'bin', 'check-freeze.sh');
+const describeShell = process.platform === 'win32' && process.env.GSTACK_RUN_SHELL_TESTS !== '1'
+  ? describe.skip
+  : describe;
 
 function runHook(scriptPath: string, input: object, env?: Record<string, string>): { exitCode: number; output: any; raw: string } {
-  const result = spawnSync('bash', [scriptPath], {
+  const result = spawnSync(BASH, [scriptPath], {
     input: JSON.stringify(input),
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, ...env },
@@ -24,7 +28,7 @@ function runHook(scriptPath: string, input: object, env?: Record<string, string>
 }
 
 function runHookRaw(scriptPath: string, rawInput: string, env?: Record<string, string>): { exitCode: number; output: any; raw: string } {
-  const result = spawnSync('bash', [scriptPath], {
+  const result = spawnSync(BASH, [scriptPath], {
     input: rawInput,
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, ...env },
@@ -66,7 +70,7 @@ function detectSafeRmWorks(): boolean {
 // ============================================================
 // check-careful.sh tests
 // ============================================================
-describe('check-careful.sh', () => {
+describeShell('check-careful.sh', () => {
 
   // --- Destructive rm commands ---
 
@@ -267,7 +271,7 @@ describe('check-careful.sh', () => {
 // ============================================================
 // check-freeze.sh tests
 // ============================================================
-describe('check-freeze.sh', () => {
+describeShell('check-freeze.sh', () => {
 
   describe('edits inside freeze boundary', () => {
     test('edit inside freeze boundary allows', () => {

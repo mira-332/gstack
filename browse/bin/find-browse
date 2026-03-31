@@ -2,14 +2,35 @@
 # Shim: delegates to compiled find-browse binary, falls back to basic discovery.
 # The compiled binary handles git root detection for workspace-local installs.
 DIR="$(cd "$(dirname "$0")/.." && pwd)/dist"
+if test -f "$DIR/find-browse.exe"; then
+  exec "$DIR/find-browse.exe" "$@"
+fi
 if test -x "$DIR/find-browse"; then
   exec "$DIR/find-browse" "$@"
 fi
 # Fallback: basic discovery with priority chain
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -n "$ROOT" ]; then
+  if test -f "$ROOT/browse/dist/browse.exe"; then
+    echo "$ROOT/browse/dist/browse.exe"
+    exit 0
+  fi
+  if test -x "$ROOT/browse/dist/browse"; then
+    echo "$ROOT/browse/dist/browse"
+    exit 0
+  fi
+fi
 for MARKER in .codex .agents .claude; do
+  if [ -n "$ROOT" ] && test -f "$ROOT/$MARKER/skills/gstack/browse/dist/browse.exe"; then
+    echo "$ROOT/$MARKER/skills/gstack/browse/dist/browse.exe"
+    exit 0
+  fi
   if [ -n "$ROOT" ] && test -x "$ROOT/$MARKER/skills/gstack/browse/dist/browse"; then
     echo "$ROOT/$MARKER/skills/gstack/browse/dist/browse"
+    exit 0
+  fi
+  if test -f "$HOME/$MARKER/skills/gstack/browse/dist/browse.exe"; then
+    echo "$HOME/$MARKER/skills/gstack/browse/dist/browse.exe"
     exit 0
   fi
   if test -x "$HOME/$MARKER/skills/gstack/browse/dist/browse"; then

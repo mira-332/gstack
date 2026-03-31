@@ -13,6 +13,7 @@ import { handleReadCommand } from '../src/read-commands';
 import { handleWriteCommand } from '../src/write-commands';
 import { handleMetaCommand } from '../src/meta-commands';
 import { consoleBuffer, networkBuffer, dialogBuffer, addConsoleEntry, addNetworkEntry, addDialogEntry, CircularBuffer } from '../src/buffers';
+import { resolveBunInvocation } from '../../scripts/bun-exec';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import * as path from 'path';
@@ -20,8 +21,11 @@ import * as path from 'path';
 let testServer: ReturnType<typeof startTestServer>;
 let bm: BrowserManager;
 let baseUrl: string;
+const SKIP_BROWSER_COMMAND_TESTS = process.platform === 'win32' && process.env.GSTACK_RUN_BROWSER_TESTS !== '1';
+const describeCommands = SKIP_BROWSER_COMMAND_TESTS ? describe.skip : describe;
 
 beforeAll(async () => {
+  if (SKIP_BROWSER_COMMAND_TESTS) return;
   testServer = startTestServer(0);
   baseUrl = testServer.url;
 
@@ -30,6 +34,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
+  if (SKIP_BROWSER_COMMAND_TESTS) return;
   // Force kill browser instead of graceful close (avoids hang)
   try { testServer.server.stop(); } catch {}
   // bm.close() can hang — just let process exit handle it
@@ -38,7 +43,7 @@ afterAll(() => {
 
 // ─── Navigation ─────────────────────────────────────────────────
 
-describe('Navigation', () => {
+describeCommands('Navigation', () => {
   test('goto navigates to URL', async () => {
     const result = await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     expect(result).toContain('Navigated to');
@@ -69,7 +74,7 @@ describe('Navigation', () => {
 
 // ─── Content Extraction ─────────────────────────────────────────
 
-describe('Content extraction', () => {
+describeCommands('Content extraction', () => {
   beforeAll(async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
   });
@@ -127,7 +132,7 @@ describe('Content extraction', () => {
 
 // ─── JavaScript / CSS / Attrs ───────────────────────────────────
 
-describe('Inspection', () => {
+describeCommands('Inspection', () => {
   beforeAll(async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
   });
@@ -241,7 +246,7 @@ describe('Inspection', () => {
 
 // ─── Interaction ────────────────────────────────────────────────
 
-describe('Interaction', () => {
+describeCommands('Interaction', () => {
   test('fill + click works on form', async () => {
     await handleWriteCommand('goto', [baseUrl + '/forms.html'], bm);
 
@@ -339,7 +344,7 @@ describe('Interaction', () => {
 
 // ─── SPA / Console / Network ───────────────────────────────────
 
-describe('SPA and buffers', () => {
+describeCommands('SPA and buffers', () => {
   test('wait handles delayed rendering', async () => {
     await handleWriteCommand('goto', [baseUrl + '/spa.html'], bm);
     const result = await handleWriteCommand('wait', ['.loaded'], bm);
@@ -377,7 +382,7 @@ describe('SPA and buffers', () => {
 
 // ─── Cookies / Storage ──────────────────────────────────────────
 
-describe('Cookies and storage', () => {
+describeCommands('Cookies and storage', () => {
   test('cookies returns redacted summary by default', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const result = await handleReadCommand('cookies', [], bm);
@@ -429,7 +434,7 @@ describe('Cookies and storage', () => {
 
 // ─── Performance ────────────────────────────────────────────────
 
-describe('Performance', () => {
+describeCommands('Performance', () => {
   test('perf returns timing data', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const result = await handleReadCommand('perf', [], bm);
@@ -442,7 +447,7 @@ describe('Performance', () => {
 
 // ─── Visual ─────────────────────────────────────────────────────
 
-describe('Visual', () => {
+describeCommands('Visual', () => {
   test('screenshot saves file', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const screenshotPath = '/tmp/browse-test-screenshot.png';
@@ -587,7 +592,7 @@ describe('Visual', () => {
 
 // ─── Tabs ───────────────────────────────────────────────────────
 
-describe('Tabs', () => {
+describeCommands('Tabs', () => {
   test('tabs lists all tabs', async () => {
     const result = await handleMetaCommand('tabs', [], bm, async () => {});
     expect(result).toContain('[');
@@ -620,7 +625,7 @@ describe('Tabs', () => {
 
 // ─── Diff ───────────────────────────────────────────────────────
 
-describe('Diff', () => {
+describeCommands('Diff', () => {
   test('diff shows differences between pages', async () => {
     const result = await handleMetaCommand(
       'diff',
@@ -638,7 +643,7 @@ describe('Diff', () => {
 
 // ─── Chain ──────────────────────────────────────────────────────
 
-describe('Chain', () => {
+describeCommands('Chain', () => {
   test('chain executes sequence of commands', async () => {
     const commands = JSON.stringify([
       ['goto', baseUrl + '/basic.html'],
@@ -671,7 +676,7 @@ describe('Chain', () => {
 
 // ─── Status ─────────────────────────────────────────────────────
 
-describe('Status', () => {
+describeCommands('Status', () => {
   test('status reports health', async () => {
     const result = await handleMetaCommand('status', [], bm, async () => {});
     expect(result).toContain('Status: healthy');
@@ -681,7 +686,7 @@ describe('Status', () => {
 
 // ─── CLI server script resolution ───────────────────────────────
 
-describe('CLI server script resolution', () => {
+describeCommands('CLI server script resolution', () => {
   test('prefers adjacent browse/src/server.ts for compiled project installs', () => {
     const root = fs.mkdtempSync('/tmp/gstack-cli-');
     const execPath = path.join(root, '.claude/skills/gstack/browse/dist/browse');
@@ -705,7 +710,7 @@ describe('CLI server script resolution', () => {
 
 // ─── CLI lifecycle ──────────────────────────────────────────────
 
-describe('CLI lifecycle', () => {
+describeCommands('CLI lifecycle', () => {
   test('dead state file triggers a clean restart', async () => {
     const stateFile = `/tmp/browse-test-state-${Date.now()}.json`;
     fs.writeFileSync(stateFile, JSON.stringify({
@@ -721,7 +726,8 @@ describe('CLI lifecycle', () => {
     }
     cliEnv.BROWSE_STATE_FILE = stateFile;
     const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-      const proc = spawn('bun', ['run', cliPath, 'status'], {
+      const bun = resolveBunInvocation(['run', cliPath, 'status']);
+      const proc = spawn(bun.command, bun.args, {
         timeout: 15000,
         env: cliEnv,
       });
@@ -749,7 +755,7 @@ describe('CLI lifecycle', () => {
 
 // ─── Buffer bounds ──────────────────────────────────────────────
 
-describe('Buffer bounds', () => {
+describeCommands('Buffer bounds', () => {
   test('console buffer caps at 50000 entries', () => {
     consoleBuffer.clear();
     for (let i = 0; i < 50_010; i++) {
@@ -790,7 +796,7 @@ describe('Buffer bounds', () => {
 
 // ─── CircularBuffer Unit Tests ─────────────────────────────────
 
-describe('CircularBuffer', () => {
+describeCommands('CircularBuffer', () => {
   test('push and toArray return items in insertion order', () => {
     const buf = new CircularBuffer<number>(5);
     buf.push(1); buf.push(2); buf.push(3);
@@ -853,7 +859,7 @@ describe('CircularBuffer', () => {
 
 // ─── Dialog Handling ─────────────────────────────────────────
 
-describe('Dialog handling', () => {
+describeCommands('Dialog handling', () => {
   test('alert does not hang — auto-accepted', async () => {
     await handleWriteCommand('goto', [baseUrl + '/dialog.html'], bm);
     await handleWriteCommand('click', ['#alert-btn'], bm);
@@ -911,7 +917,7 @@ describe('Dialog handling', () => {
 
 // ─── Element State Checks (is) ─────────────────────────────────
 
-describe('Element state checks', () => {
+describeCommands('Element state checks', () => {
   beforeAll(async () => {
     await handleWriteCommand('goto', [baseUrl + '/states.html'], bm);
   });
@@ -1003,7 +1009,7 @@ describe('Element state checks', () => {
 
 // ─── File Upload ─────────────────────────────────────────────────
 
-describe('File upload', () => {
+describeCommands('File upload', () => {
   test('upload single file', async () => {
     await handleWriteCommand('goto', [baseUrl + '/upload.html'], bm);
     // Create a temp file to upload
@@ -1053,7 +1059,7 @@ describe('File upload', () => {
 
 // ─── Eval command ───────────────────────────────────────────────
 
-describe('Eval', () => {
+describeCommands('Eval', () => {
   test('eval runs JS file', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const tempFile = '/tmp/browse-test-eval.js';
@@ -1094,7 +1100,7 @@ describe('Eval', () => {
 
 // ─── Press command ──────────────────────────────────────────────
 
-describe('Press', () => {
+describeCommands('Press', () => {
   test('press Tab moves focus', async () => {
     await handleWriteCommand('goto', [baseUrl + '/forms.html'], bm);
     await handleWriteCommand('click', ['#email'], bm);
@@ -1114,7 +1120,7 @@ describe('Press', () => {
 
 // ─── Cookie command ─────────────────────────────────────────────
 
-describe('Cookie command', () => {
+describeCommands('Cookie command', () => {
   test('cookie sets value', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const result = await handleWriteCommand('cookie', ['testcookie=testvalue'], bm);
@@ -1157,7 +1163,7 @@ describe('Cookie command', () => {
 
 // ─── Header command ─────────────────────────────────────────────
 
-describe('Header command', () => {
+describeCommands('Header command', () => {
   test('header sets value and is sent', async () => {
     const result = await handleWriteCommand('header', ['X-Test:test-value'], bm);
     expect(result).toContain('Header set');
@@ -1189,7 +1195,7 @@ describe('Header command', () => {
 
 // ─── PDF command ────────────────────────────────────────────────
 
-describe('PDF', () => {
+describeCommands('PDF', () => {
   test('pdf saves file with size', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const pdfPath = '/tmp/browse-test.pdf';
@@ -1204,7 +1210,7 @@ describe('PDF', () => {
 
 // ─── Empty page edge cases ──────────────────────────────────────
 
-describe('Empty page', () => {
+describeCommands('Empty page', () => {
   test('text returns empty on empty page', async () => {
     await handleWriteCommand('goto', [baseUrl + '/empty.html'], bm);
     const result = await handleReadCommand('text', [], bm);
@@ -1224,7 +1230,7 @@ describe('Empty page', () => {
 
 // ─── Error paths ────────────────────────────────────────────────
 
-describe('Errors', () => {
+describeCommands('Errors', () => {
   // Write command errors
   test('goto with no arg throws', async () => {
     try {
@@ -1401,7 +1407,7 @@ describe('Errors', () => {
 
 // ─── Workflow: Navigation + Snapshot + Interaction ───────────────
 
-describe('Workflows', () => {
+describeCommands('Workflows', () => {
   test('navigation → snapshot → click @ref → verify URL', async () => {
     await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
     const snap = await handleMetaCommand('snapshot', ['-i'], bm, async () => {});
@@ -1469,7 +1475,7 @@ describe('Workflows', () => {
 
 // ─── Wait load states ──────────────────────────────────────────
 
-describe('Wait load states', () => {
+describeCommands('Wait load states', () => {
   test('wait --networkidle succeeds after page load', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const result = await handleWriteCommand('wait', ['--networkidle'], bm);
@@ -1503,7 +1509,7 @@ describe('Wait load states', () => {
 
 // ─── Console --errors ──────────────────────────────────────────
 
-describe('Console --errors', () => {
+describeCommands('Console --errors', () => {
   test('console --errors filters to error and warning only', async () => {
     // Clear existing entries
     await handleReadCommand('console', ['--clear'], bm);
@@ -1551,7 +1557,7 @@ describe('Console --errors', () => {
 
 // ─── Cookie Import ─────────────────────────────────────────────
 
-describe('Cookie import', () => {
+describeCommands('Cookie import', () => {
   test('cookie-import loads valid JSON cookies', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const tempFile = '/tmp/browse-test-cookies.json';
@@ -1679,7 +1685,7 @@ describe('Cookie import', () => {
 
 // ─── Security: Redact sensitive values (PR #21) ─────────────────
 
-describe('Sensitive value redaction', () => {
+describeCommands('Sensitive value redaction', () => {
   test('type command does not echo typed text', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const result = await handleWriteCommand('type', ['my-secret-password'], bm);
@@ -1740,7 +1746,7 @@ describe('Sensitive value redaction', () => {
 
 // ─── Security: Path traversal prevention (PR #26) ───────────────
 
-describe('Path traversal prevention', () => {
+describeCommands('Path traversal prevention', () => {
   test('screenshot rejects path outside safe dirs', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     try {
@@ -1850,7 +1856,7 @@ describe('Path traversal prevention', () => {
 
 // ─── Chain command: cookie-import in chain ──────────────────────
 
-describe('Chain with cookie-import', () => {
+describeCommands('Chain with cookie-import', () => {
   test('cookie-import works inside chain', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     const tmpCookies = '/tmp/test-chain-cookies.json';
@@ -1872,7 +1878,7 @@ describe('Chain with cookie-import', () => {
 
 // ─── Network Idle Detection ─────────────────────────────────────
 
-describe('Network idle', () => {
+describeCommands('Network idle', () => {
   test('click on fetch button waits for XHR to complete', async () => {
     await handleWriteCommand('goto', [baseUrl + '/network-idle.html'], bm);
     // Click the button that triggers a fetch → networkidle waits for it
@@ -1904,7 +1910,7 @@ describe('Network idle', () => {
 
 // ─── Chain Pipe Format ──────────────────────────────────────────
 
-describe('Chain pipe format', () => {
+describeCommands('Chain pipe format', () => {
   test('pipe-delimited commands work', async () => {
     const result = await handleMetaCommand(
       'chain',
@@ -1955,7 +1961,7 @@ describe('Chain pipe format', () => {
 
 // ─── State Persistence ──────────────────────────────────────────
 
-describe('State persistence', () => {
+describeCommands('State persistence', () => {
   test('state save and load round-trip', async () => {
     await handleWriteCommand('goto', [baseUrl + '/basic.html'], bm);
     // Set a cookie so we can verify it persists
@@ -2026,7 +2032,7 @@ describe('State persistence', () => {
 
 // ─── Frame (Iframe Support) ─────────────────────────────────────
 
-describe('Frame', () => {
+describeCommands('Frame', () => {
   test('frame switch to iframe and back', async () => {
     await handleWriteCommand('goto', [baseUrl + '/iframe.html'], bm);
 

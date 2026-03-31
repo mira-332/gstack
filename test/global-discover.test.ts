@@ -2,11 +2,25 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { spawnSync } from "child_process";
 
 // Import normalizeRemoteUrl for unit testing
 // We test the script end-to-end via CLI and normalizeRemoteUrl via import
-const scriptPath = join(import.meta.dir, "..", "bin", "gstack-global-discover.ts");
+const ROOT = join(import.meta.dir, "..");
+
+async function runCliWithCapture(args: string[]) {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const mod = await import("../bin/gstack-global-discover.ts");
+  const status = await mod.runCli(args, {
+    stdout: (line: string) => stdout.push(line),
+    stderr: (line: string) => stderr.push(line),
+  });
+  return {
+    status,
+    stdout: stdout.join("\n"),
+    stderr: stderr.join("\n"),
+  };
+}
 
 describe("gstack-global-discover", () => {
   describe("normalizeRemoteUrl", () => {
@@ -64,39 +78,26 @@ describe("gstack-global-discover", () => {
   });
 
   describe("CLI", () => {
-    test("--help exits 0 and prints usage", () => {
-      const result = spawnSync("bun", ["run", scriptPath, "--help"], {
-        encoding: "utf-8",
-        timeout: 10000,
-      });
+    test("--help exits 0 and prints usage", async () => {
+      const result = await runCliWithCapture(["--help"]);
       expect(result.status).toBe(0);
       expect(result.stderr).toContain("--since");
     });
 
-    test("no args exits 1 with error", () => {
-      const result = spawnSync("bun", ["run", scriptPath], {
-        encoding: "utf-8",
-        timeout: 10000,
-      });
+    test("no args exits 1 with error", async () => {
+      const result = await runCliWithCapture([]);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("--since is required");
     });
 
-    test("invalid window format exits 1", () => {
-      const result = spawnSync("bun", ["run", scriptPath, "--since", "abc"], {
-        encoding: "utf-8",
-        timeout: 10000,
-      });
+    test("invalid window format exits 1", async () => {
+      const result = await runCliWithCapture(["--since", "abc"]);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("Invalid window format");
     });
 
-    test("--since 7d produces valid JSON", () => {
-      const result = spawnSync(
-        "bun",
-        ["run", scriptPath, "--since", "7d", "--format", "json"],
-        { encoding: "utf-8", timeout: 30000 }
-      );
+    test("--since 7d produces valid JSON", async () => {
+      const result = await runCliWithCapture(["--since", "7d", "--format", "json"]);
       expect(result.status).toBe(0);
       const json = JSON.parse(result.stdout);
       expect(json).toHaveProperty("window", "7d");
@@ -107,24 +108,16 @@ describe("gstack-global-discover", () => {
       expect(Array.isArray(json.repos)).toBe(true);
     });
 
-    test("--since 7d --format summary produces readable output", () => {
-      const result = spawnSync(
-        "bun",
-        ["run", scriptPath, "--since", "7d", "--format", "summary"],
-        { encoding: "utf-8", timeout: 30000 }
-      );
+    test("--since 7d --format summary produces readable output", async () => {
+      const result = await runCliWithCapture(["--since", "7d", "--format", "summary"]);
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("Window: 7d");
       expect(result.stdout).toContain("Sessions:");
       expect(result.stdout).toContain("Repos:");
     });
 
-    test("--since 1h returns results (may be empty)", () => {
-      const result = spawnSync(
-        "bun",
-        ["run", scriptPath, "--since", "1h", "--format", "json"],
-        { encoding: "utf-8", timeout: 30000 }
-      );
+    test("--since 1h returns results (may be empty)", async () => {
+      const result = await runCliWithCapture(["--since", "1h", "--format", "json"]);
       expect(result.status).toBe(0);
       const json = JSON.parse(result.stdout);
       expect(json.total_sessions).toBeGreaterThanOrEqual(0);
@@ -132,12 +125,8 @@ describe("gstack-global-discover", () => {
   });
 
   describe("discovery output structure", () => {
-    test("repos have required fields", () => {
-      const result = spawnSync(
-        "bun",
-        ["run", scriptPath, "--since", "30d", "--format", "json"],
-        { encoding: "utf-8", timeout: 30000 }
-      );
+    test("repos have required fields", async () => {
+      const result = await runCliWithCapture(["--since", "30d", "--format", "json"]);
       expect(result.status).toBe(0);
       const json = JSON.parse(result.stdout);
 
@@ -154,12 +143,8 @@ describe("gstack-global-discover", () => {
       }
     });
 
-    test("tools summary matches repo data", () => {
-      const result = spawnSync(
-        "bun",
-        ["run", scriptPath, "--since", "30d", "--format", "json"],
-        { encoding: "utf-8", timeout: 30000 }
-      );
+    test("tools summary matches repo data", async () => {
+      const result = await runCliWithCapture(["--since", "30d", "--format", "json"]);
       const json = JSON.parse(result.stdout);
 
       // Total sessions should equal sum across tools
@@ -170,12 +155,8 @@ describe("gstack-global-discover", () => {
       expect(json.total_sessions).toBe(toolTotal);
     });
 
-    test("deduplicates Conductor workspaces by remote", () => {
-      const result = spawnSync(
-        "bun",
-        ["run", scriptPath, "--since", "30d", "--format", "json"],
-        { encoding: "utf-8", timeout: 30000 }
-      );
+    test("deduplicates Conductor workspaces by remote", async () => {
+      const result = await runCliWithCapture(["--since", "30d", "--format", "json"]);
       const json = JSON.parse(result.stdout);
 
       // Check that no two repos share the same normalized remote

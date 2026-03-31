@@ -42,9 +42,20 @@ describe('locateBinary', () => {
     expect(agentsIdx).toBeLessThan(claudeIdx);
   });
 
+  test('supports Windows executable names and dev-tree lookup', () => {
+    const src = require('fs').readFileSync(require('path').join(__dirname, '../src/find-browse.ts'), 'utf-8');
+    expect(src).toContain("['browse.exe', 'browse']");
+    expect(src).toContain("join(root, 'browse', 'dist', binaryName)");
+  });
+
   test('function signature accepts no arguments', () => {
     // locateBinary should be callable with no arguments
     expect(typeof locateBinary).toBe('function');
     expect(locateBinary.length).toBe(0);
+  });
+
+  test('CLI entrypoint only runs when executed as main module', () => {
+    const src = require('fs').readFileSync(require('path').join(__dirname, '../src/find-browse.ts'), 'utf-8');
+    expect(src).toContain('if (import.meta.main)');
   });
 });

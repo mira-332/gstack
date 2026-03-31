@@ -10,6 +10,7 @@ import { spawn, type Subprocess } from 'bun';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { resolveBunInvocation } from '../../scripts/bun-exec';
 
 let serverProc: Subprocess | null = null;
 let agentProc: Subprocess | null = null;
@@ -19,6 +20,8 @@ let tmpDir: string = '';
 let stateFile: string = '';
 let queueFile: string = '';
 let mockBinDir: string = '';
+const SKIP_SIDEBAR_ROUNDTRIP = process.platform === 'win32' && process.env.GSTACK_RUN_BROWSER_TESTS !== '1';
+const describeSidebarRoundtrip = SKIP_SIDEBAR_ROUNDTRIP ? describe.skip : describe;
 
 async function api(pathname: string, opts: RequestInit = {}): Promise<Response> {
   const headers: Record<string, string> = {
@@ -58,6 +61,7 @@ function writeMockClaude(script: string) {
 }
 
 beforeAll(async () => {
+  if (SKIP_SIDEBAR_ROUNDTRIP) return;
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sidebar-roundtrip-'));
   stateFile = path.join(tmpDir, 'browse.json');
   queueFile = path.join(tmpDir, 'sidebar-queue.jsonl');
@@ -74,7 +78,8 @@ echo '{"type":"result","result":"Done."}'
 
   // Start server (no browser)
   const serverScript = path.resolve(__dirname, '..', 'src', 'server.ts');
-  serverProc = spawn(['bun', 'run', serverScript], {
+  const serverBun = resolveBunInvocation(['run', serverScript]);
+  serverProc = spawn([serverBun.command, ...serverBun.args], {
     env: {
       ...process.env,
       BROWSE_STATE_FILE: stateFile,
@@ -105,7 +110,8 @@ echo '{"type":"result","result":"Done."}'
 
   // Start sidebar-agent with mock claude on PATH
   const agentScript = path.resolve(__dirname, '..', 'src', 'sidebar-agent.ts');
-  agentProc = spawn(['bun', 'run', agentScript], {
+  const agentBun = resolveBunInvocation(['run', agentScript]);
+  agentProc = spawn([agentBun.command, ...agentBun.args], {
     env: {
       ...process.env,
       PATH: `${mockBinDir}:${process.env.PATH}`,
@@ -123,12 +129,13 @@ echo '{"type":"result","result":"Done."}'
 }, 20000);
 
 afterAll(() => {
+  if (SKIP_SIDEBAR_ROUNDTRIP) return;
   if (agentProc) { try { agentProc.kill(); } catch {} }
   if (serverProc) { try { serverProc.kill(); } catch {} }
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 });
 
-describe('sidebar-agent round-trip', () => {
+describeSidebarRoundtrip('sidebar-agent round-trip', () => {
   test('full message round-trip with mock claude', async () => {
     await resetState();
 

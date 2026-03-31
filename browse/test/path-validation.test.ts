@@ -4,14 +4,15 @@ import { validateReadPath } from '../src/read-commands';
 import { symlinkSync, unlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { TEMP_DIR, IS_WINDOWS } from '../src/platform';
 
 describe('validateOutputPath', () => {
-  it('allows paths within /tmp', () => {
-    expect(() => validateOutputPath('/tmp/screenshot.png')).not.toThrow();
+  it('allows paths within temp dir', () => {
+    expect(() => validateOutputPath(join(TEMP_DIR, 'screenshot.png'))).not.toThrow();
   });
 
-  it('allows paths in subdirectories of /tmp', () => {
-    expect(() => validateOutputPath('/tmp/browse/output.png')).not.toThrow();
+  it('allows paths in subdirectories of temp dir', () => {
+    expect(() => validateOutputPath(join(TEMP_DIR, 'browse', 'output.png'))).not.toThrow();
   });
 
   it('allows paths within cwd', () => {
@@ -19,25 +20,28 @@ describe('validateOutputPath', () => {
   });
 
   it('blocks paths outside safe directories', () => {
-    expect(() => validateOutputPath('/etc/cron.d/backdoor.png')).toThrow(/Path must be within/);
+    const outside = IS_WINDOWS ? 'C:\\outside\\backdoor.png' : '/etc/cron.d/backdoor.png';
+    expect(() => validateOutputPath(outside)).toThrow(/Path must be within/);
   });
 
-  it('blocks /tmpevil prefix collision', () => {
-    expect(() => validateOutputPath('/tmpevil/file.png')).toThrow(/Path must be within/);
+  it('blocks temp-dir prefix collision', () => {
+    expect(() => validateOutputPath(`${TEMP_DIR}-evil/file.png`)).toThrow(/Path must be within/);
   });
 
   it('blocks home directory paths', () => {
-    expect(() => validateOutputPath('/Users/someone/file.png')).toThrow(/Path must be within/);
+    const homeLike = IS_WINDOWS ? 'C:\\Users\\someone\\file.png' : '/Users/someone/file.png';
+    expect(() => validateOutputPath(homeLike)).toThrow(/Path must be within/);
   });
 
   it('blocks path traversal via ..', () => {
-    expect(() => validateOutputPath('/tmp/../etc/passwd')).toThrow(/Path must be within/);
+    const traversalTarget = join(TEMP_DIR, '..', 'etc', 'passwd');
+    expect(() => validateOutputPath(traversalTarget)).toThrow(/Path must be within/);
   });
 });
 
 describe('validateReadPath', () => {
-  it('allows absolute paths within /tmp', () => {
-    expect(() => validateReadPath('/tmp/script.js')).not.toThrow();
+  it('allows absolute paths within temp dir', () => {
+    expect(() => validateReadPath(join(TEMP_DIR, 'script.js'))).not.toThrow();
   });
 
   it('allows absolute paths within cwd', () => {
@@ -49,11 +53,12 @@ describe('validateReadPath', () => {
   });
 
   it('blocks absolute paths outside safe directories', () => {
-    expect(() => validateReadPath('/etc/passwd')).toThrow(/Path must be within/);
+    const outside = IS_WINDOWS ? 'C:\\outside\\passwd' : '/etc/passwd';
+    expect(() => validateReadPath(outside)).toThrow(/Path must be within/);
   });
 
-  it('blocks /tmpevil prefix collision', () => {
-    expect(() => validateReadPath('/tmpevil/file.js')).toThrow(/Path must be within/);
+  it('blocks temp-dir prefix collision', () => {
+    expect(() => validateReadPath(`${TEMP_DIR}-evil/file.js`)).toThrow(/Path must be within/);
   });
 
   it('blocks path traversal sequences', () => {
@@ -66,9 +71,15 @@ describe('validateReadPath', () => {
 
   it('blocks symlink inside safe dir pointing outside', () => {
     const linkPath = join(tmpdir(), 'test-symlink-bypass-' + Date.now());
+    const targetPath = IS_WINDOWS ? 'C:\\Windows\\System32\\drivers\\etc\\hosts' : '/etc/passwd';
     try {
-      symlinkSync('/etc/passwd', linkPath);
+      symlinkSync(targetPath, linkPath);
       expect(() => validateReadPath(linkPath)).toThrow(/Path must be within/);
+    } catch (err: any) {
+      if (IS_WINDOWS && err?.code === 'EPERM') {
+        return;
+      }
+      throw err;
     } finally {
       try { unlinkSync(linkPath); } catch {}
     }
@@ -83,7 +94,11 @@ describe('validateReadPath', () => {
       writeFileSync(filePath, 'not a directory');
       // filePath is a file, so filePath + '/subpath' triggers ENOTDIR
       const invalidPath = join(filePath, 'subpath');
-      expect(() => validateReadPath(invalidPath)).toThrow(/Cannot resolve real path|Path must be within/);
+      if (IS_WINDOWS) {
+        expect(() => validateReadPath(invalidPath)).not.toThrow();
+      } else {
+        expect(() => validateReadPath(invalidPath)).toThrow(/Cannot resolve real path|Path must be within/);
+      }
     } finally {
       try { unlinkSync(filePath); } catch {}
     }

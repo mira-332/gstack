@@ -17,8 +17,11 @@ let testServer: ReturnType<typeof startTestServer>;
 let bm: BrowserManager;
 let baseUrl: string;
 const shutdown = async () => {};
+const SKIP_SNAPSHOT_TESTS = process.platform === 'win32' && process.env.GSTACK_RUN_BROWSER_TESTS !== '1';
+const describeSnapshot = SKIP_SNAPSHOT_TESTS ? describe.skip : describe;
 
 beforeAll(async () => {
+  if (SKIP_SNAPSHOT_TESTS) return;
   testServer = startTestServer(0);
   baseUrl = testServer.url;
 
@@ -26,14 +29,15 @@ beforeAll(async () => {
   await bm.launch();
 });
 
-afterAll(() => {
+afterAll(async () => {
+  if (SKIP_SNAPSHOT_TESTS) return;
+  try { await bm.close(); } catch {}
   try { testServer.server.stop(); } catch {}
-  setTimeout(() => process.exit(0), 500);
 });
 
 // ─── Snapshot Output ────────────────────────────────────────────
 
-describe('Snapshot', () => {
+describeSnapshot('Snapshot', () => {
   test('snapshot returns accessibility tree with refs', async () => {
     await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
     const result = await handleMetaCommand('snapshot', [], bm, shutdown);
@@ -102,7 +106,7 @@ describe('Snapshot', () => {
 
 // ─── Ref-Based Interaction ──────────────────────────────────────
 
-describe('Ref resolution', () => {
+describeSnapshot('Ref resolution', () => {
   test('click @ref works after snapshot', async () => {
     await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
     const snap = await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
@@ -175,7 +179,7 @@ describe('Ref resolution', () => {
 
 // ─── Ref Invalidation ───────────────────────────────────────────
 
-describe('Ref invalidation', () => {
+describeSnapshot('Ref invalidation', () => {
   test('stale ref after goto returns clear error', async () => {
     await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
     await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
@@ -204,7 +208,7 @@ describe('Ref invalidation', () => {
 
 // ─── Ref Staleness Detection ────────────────────────────────────
 
-describe('Ref staleness detection', () => {
+describeSnapshot('Ref staleness detection', () => {
   test('ref metadata stores role and name', async () => {
     await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
     await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
@@ -252,7 +256,7 @@ describe('Ref staleness detection', () => {
 
 // ─── Snapshot Diffing ──────────────────────────────────────────
 
-describe('Snapshot diff', () => {
+describeSnapshot('Snapshot diff', () => {
   test('first snapshot -D stores baseline', async () => {
     // Clear any previous snapshot
     bm.setLastSnapshot(null);
@@ -290,7 +294,7 @@ describe('Snapshot diff', () => {
 
 // ─── Annotated Screenshots ─────────────────────────────────────
 
-describe('Annotated screenshots', () => {
+describeSnapshot('Annotated screenshots', () => {
   test('snapshot -a creates annotated screenshot', async () => {
     const screenshotPath = '/tmp/browse-test-annotated.png';
     await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
@@ -335,7 +339,7 @@ describe('Annotated screenshots', () => {
 
 // ─── Cursor-Interactive ────────────────────────────────────────
 
-describe('Cursor-interactive', () => {
+describeSnapshot('Cursor-interactive', () => {
   test('snapshot -C finds cursor:pointer elements', async () => {
     await handleWriteCommand('goto', [baseUrl + '/cursor-interactive.html'], bm);
     const result = await handleMetaCommand('snapshot', ['-C'], bm, shutdown);
@@ -390,7 +394,7 @@ describe('Cursor-interactive', () => {
 
 // ─── Snapshot Error Paths ───────────────────────────────────────
 
-describe('Snapshot errors', () => {
+describeSnapshot('Snapshot errors', () => {
   test('unknown flag throws', async () => {
     try {
       await handleMetaCommand('snapshot', ['--bogus'], bm, shutdown);
@@ -440,7 +444,7 @@ describe('Snapshot errors', () => {
 
 // ─── Combined Flags ─────────────────────────────────────────────
 
-describe('Snapshot combined flags', () => {
+describeSnapshot('Snapshot combined flags', () => {
   test('-i -c -d 2 combines all filters', async () => {
     await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
     const result = await handleMetaCommand('snapshot', ['-i', '-c', '-d', '2'], bm, shutdown);

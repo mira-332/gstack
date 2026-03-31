@@ -14,6 +14,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { resolveGitExecutable } from '../scripts/bun-exec';
 
 // --- Interfaces ---
 
@@ -53,7 +54,7 @@ function copyDirSync(src: string, dest: string): void {
 
 /** Run a git command and return stdout. Throws on failure unless tolerateFailure is set. */
 function git(args: string[], cwd: string, tolerateFailure = false): string {
-  const result = spawnSync('git', args, { cwd, stdio: 'pipe', timeout: 30_000 });
+  const result = spawnSync(resolveGitExecutable(), args, { cwd, stdio: 'pipe', timeout: 30_000 });
   const stdout = result.stdout?.toString().trim() ?? '';
   const stderr = result.stderr?.toString().trim() ?? '';
   if (result.status !== 0 && !tolerateFailure) {

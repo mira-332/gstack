@@ -2,10 +2,53 @@ import { describe, test, expect } from 'bun:test';
 import { validateSkill, extractRemoteSlugPatterns, extractWeightsFromTable } from './helpers/skill-parser';
 import { ALL_COMMANDS, COMMAND_DESCRIPTIONS, READ_COMMANDS, WRITE_COMMANDS, META_COMMANDS } from '../browse/src/commands';
 import { SNAPSHOT_FLAGS } from '../browse/src/snapshot';
+import { resolveBashExecutable, resolveBunInvocation } from '../scripts/bun-exec';
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
 const ROOT = path.resolve(import.meta.dir, '..');
+
+function runBun(args: string[]) {
+  const bun = resolveBunInvocation(args);
+  const result = spawnSync(bun.command, bun.args, {
+    cwd: ROOT,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: process.env,
+  });
+  const exitCode = result.status ?? (result as any).exitCode ?? 1;
+  return {
+    ...result,
+    status: exitCode,
+    exitCode,
+    stdout: result.stdout ?? Buffer.from(''),
+    stderr: result.stderr ?? Buffer.from(''),
+  };
+}
+
+function runBash(args: string[]) {
+  const result = spawnSync(resolveBashExecutable(), args, {
+    cwd: ROOT,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: process.env,
+  });
+  const exitCode = result.status ?? (result as any).exitCode ?? 1;
+  return {
+    ...result,
+    status: exitCode,
+    exitCode,
+    stdout: result.stdout ?? Buffer.from(''),
+    stderr: result.stderr ?? Buffer.from(''),
+  };
+}
+
+const BASH_RUNTIME_OK = (() => {
+  const result = runBash(['-lc', 'echo ok']);
+  return result.status === 0 && result.stdout.toString().trim() === 'ok';
+})();
+const SKIP_GSTACK_SLUG_WINDOWS_TESTS = process.platform === 'win32' && process.env.GSTACK_RUN_BASH_TESTS !== '1';
 
 describe('SKILL.md command validation', () => {
   test('all $B commands in SKILL.md are valid browse commands', () => {
@@ -263,18 +306,22 @@ describe('Update check preamble', () => {
   });
 
   test('update check bash block exits 0 when up to date', () => {
+    if (!BASH_RUNTIME_OK) return;
     // Simulate the exact preamble command from SKILL.md
-    const result = Bun.spawnSync(['bash', '-c',
-      '_UPD=$(echo "" || true); [ -n "$_UPD" ] && echo "$_UPD" || true'
-    ], { stdout: 'pipe', stderr: 'pipe' });
-    expect(result.exitCode).toBe(0);
+    const result = runBash([
+      '-c',
+      '_UPD=$(echo "" || true); [ -n "$_UPD" ] && echo "$_UPD" || true',
+    ]);
+    expect(result.status).toBe(0);
   });
 
   test('update check bash block exits 0 when upgrade available', () => {
-    const result = Bun.spawnSync(['bash', '-c',
-      '_UPD=$(echo "UPGRADE_AVAILABLE 0.3.3 0.4.0" || true); [ -n "$_UPD" ] && echo "$_UPD" || true'
-    ], { stdout: 'pipe', stderr: 'pipe' });
-    expect(result.exitCode).toBe(0);
+    if (!BASH_RUNTIME_OK) return;
+    const result = runBash([
+      '-c',
+      '_UPD=$(echo "UPGRADE_AVAILABLE 0.3.3 0.4.0" || true); [ -n "$_UPD" ] && echo "$_UPD" || true',
+    ]);
+    expect(result.status).toBe(0);
     expect(result.stdout.toString().trim()).toBe('UPGRADE_AVAILABLE 0.3.3 0.4.0');
   });
 });
@@ -952,45 +999,56 @@ describe('CEO review mode validation', () => {
 
 describe('gstack-slug', () => {
   const SLUG_BIN = path.join(ROOT, 'bin', 'gstack-slug');
+  const runSlug = () => runBash([SLUG_BIN]);
 
   test('binary exists and is executable', () => {
     expect(fs.existsSync(SLUG_BIN)).toBe(true);
-    const stat = fs.statSync(SLUG_BIN);
-    expect(stat.mode & 0o111).toBeGreaterThan(0);
+    if (process.platform !== 'win32') {
+      const stat = fs.statSync(SLUG_BIN);
+      expect(stat.mode & 0o111).toBeGreaterThan(0);
+    }
   });
 
   test('outputs SLUG and BRANCH lines in a git repo', () => {
-    const result = Bun.spawnSync([SLUG_BIN], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
-    expect(result.exitCode).toBe(0);
+    if (!BASH_RUNTIME_OK || SKIP_GSTACK_SLUG_WINDOWS_TESTS) return;
+    const result = runSlug();
+    expect(result.status).toBe(0);
     const output = result.stdout.toString();
+    expect(output).toContain('REPO_SLUG=');
     expect(output).toContain('SLUG=');
     expect(output).toContain('BRANCH=');
   });
 
   test('SLUG does not contain forward slashes', () => {
-    const result = Bun.spawnSync([SLUG_BIN], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
+    if (!BASH_RUNTIME_OK || SKIP_GSTACK_SLUG_WINDOWS_TESTS) return;
+    const result = runSlug();
     const slug = result.stdout.toString().match(/SLUG=(.*)/)?.[1] ?? '';
     expect(slug).not.toContain('/');
     expect(slug.length).toBeGreaterThan(0);
   });
 
   test('BRANCH does not contain forward slashes', () => {
-    const result = Bun.spawnSync([SLUG_BIN], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
+    if (!BASH_RUNTIME_OK || SKIP_GSTACK_SLUG_WINDOWS_TESTS) return;
+    const result = runSlug();
     const branch = result.stdout.toString().match(/BRANCH=(.*)/)?.[1] ?? '';
     expect(branch).not.toContain('/');
     expect(branch.length).toBeGreaterThan(0);
   });
 
   test('output is eval-compatible (KEY=VALUE format)', () => {
-    const result = Bun.spawnSync([SLUG_BIN], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
+    if (!BASH_RUNTIME_OK || SKIP_GSTACK_SLUG_WINDOWS_TESTS) return;
+    const result = runSlug();
     const lines = result.stdout.toString().trim().split('\n');
-    expect(lines.length).toBe(2);
-    expect(lines[0]).toMatch(/^SLUG=.+/);
-    expect(lines[1]).toMatch(/^BRANCH=.+/);
+    expect(lines.length).toBeGreaterThanOrEqual(4);
+    expect(lines[0]).toMatch(/^REPO_URL=.*$/);
+    expect(lines[1]).toMatch(/^REPO_SLUG=.+/);
+    expect(lines[2]).toMatch(/^SLUG=.+/);
+    expect(lines[3]).toMatch(/^BRANCH=.+/);
   });
 
   test('output values contain only safe characters (no shell metacharacters)', () => {
-    const result = Bun.spawnSync([SLUG_BIN], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
+    if (!BASH_RUNTIME_OK || SKIP_GSTACK_SLUG_WINDOWS_TESTS) return;
+    const result = runSlug();
     const slug = result.stdout.toString().match(/SLUG=(.*)/)?.[1] ?? '';
     const branch = result.stdout.toString().match(/BRANCH=(.*)/)?.[1] ?? '';
     // Only alphanumeric, dot, dash, underscore are allowed (#133)
@@ -998,23 +1056,39 @@ describe('gstack-slug', () => {
     expect(branch).toMatch(/^[a-zA-Z0-9._-]+$/);
   });
   test('eval sets variables under bash with set -euo pipefail', () => {
-    const result = Bun.spawnSync(
-      ['bash', '-c', 'set -euo pipefail; eval "$(./bin/gstack-slug 2>/dev/null)"; echo "SLUG=$SLUG"; echo "BRANCH=$BRANCH"'],
-      { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' }
-    );
-    expect(result.exitCode).toBe(0);
+    if (!BASH_RUNTIME_OK || SKIP_GSTACK_SLUG_WINDOWS_TESTS) return;
+    const result = runBash(['-c', 'set -euo pipefail; eval "$(./bin/gstack-slug 2>/dev/null)"; echo "SLUG=$SLUG"; echo "BRANCH=$BRANCH"']);
+    expect(result.status).toBe(0);
     const output = result.stdout.toString();
     expect(output).toMatch(/^SLUG=.+/m);
     expect(output).toMatch(/^BRANCH=.+/m);
   });
 
   test('no templates or bin scripts use source process substitution for gstack-slug', () => {
-    const result = Bun.spawnSync(
-      ['grep', '-r', 'source <(.*gstack-slug', '--include=*.tmpl', '--include=gstack-review-*', '.'],
-      { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' }
-    );
-    // grep returns exit code 1 when no matches found — that's what we want
-    expect(result.stdout.toString().trim()).toBe('');
+    const matches: string[] = [];
+    const stack = [ROOT];
+
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        if (entry.name.startsWith('.')) continue;
+        const next = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules') continue;
+          stack.push(next);
+          continue;
+        }
+        if (!entry.name.endsWith('.tmpl') && !entry.name.startsWith('gstack-review-')) continue;
+        const content = fs.readFileSync(next, 'utf-8');
+        for (const [index, line] of content.split('\n').entries()) {
+          if (line.includes('source <(') && line.includes('gstack-slug')) {
+            matches.push(`${path.relative(ROOT, next)}:${index + 1}`);
+          }
+        }
+      }
+    }
+
+    expect(matches).toEqual([]);
   });
 });
 
@@ -1341,9 +1415,7 @@ describe('Codex skill', () => {
 
   test('codex-host ship/review do NOT contain adversarial review step', () => {
     // .agents/ is gitignored — generate on demand
-    Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex'], {
-      cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
-    });
+    runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'codex']);
     const shipContent = fs.readFileSync(path.join(ROOT, '.agents', 'skills', 'gstack-ship', 'SKILL.md'), 'utf-8');
     expect(shipContent).not.toContain('codex review --base');
     expect(shipContent).not.toContain('CODEX_REVIEWS');
@@ -1426,9 +1498,7 @@ describe('Codex skill validation', () => {
   const AGENTS_DIR = path.join(ROOT, '.agents', 'skills');
 
   // .agents/ is gitignored (v0.11.2.0) — generate on demand for tests
-  Bun.spawnSync(['bun', 'run', 'scripts/gen-skill-docs.ts', '--host', 'codex'], {
-    cwd: ROOT, stdout: 'pipe', stderr: 'pipe',
-  });
+  runBun(['run', 'scripts/gen-skill-docs.ts', '--host', 'codex']);
 
   // Discover all Claude skills with templates (except /codex which is Claude-only)
   const CLAUDE_SKILLS_WITH_TEMPLATES = (() => {

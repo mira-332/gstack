@@ -16,6 +16,7 @@ import { spawn, type Subprocess } from 'bun';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { resolveBunInvocation } from '../scripts/bun-exec';
 import {
   ROOT,
   describeIfSelected, testIfSelected,
@@ -52,7 +53,8 @@ describeIfSelected('Sidebar URL accuracy E2E', ['sidebar-url-accuracy'], () => {
     fs.mkdirSync(path.dirname(queueFile), { recursive: true });
 
     const serverScript = path.resolve(ROOT, 'browse', 'src', 'server.ts');
-    serverProc = spawn(['bun', 'run', serverScript], {
+    const serverBun = resolveBunInvocation(['run', serverScript]);
+    serverProc = spawn([serverBun.command, ...serverBun.args], {
       env: {
         ...process.env,
         BROWSE_STATE_FILE: stateFile,
@@ -179,7 +181,8 @@ describeIfSelected('Sidebar navigate E2E', ['sidebar-navigate'], () => {
 
     // Start server WITHOUT headless skip — we need a real browser for Claude to use
     const serverScript = path.resolve(ROOT, 'browse', 'src', 'server.ts');
-    serverProc = spawn(['bun', 'run', serverScript], {
+    const serverBun = resolveBunInvocation(['run', serverScript]);
+    serverProc = spawn([serverBun.command, ...serverBun.args], {
       env: {
         ...process.env,
         BROWSE_STATE_FILE: stateFile,
@@ -209,7 +212,8 @@ describeIfSelected('Sidebar navigate E2E', ['sidebar-navigate'], () => {
 
     // Start sidebar-agent
     const agentScript = path.resolve(ROOT, 'browse', 'src', 'sidebar-agent.ts');
-    agentProc = spawn(['bun', 'run', agentScript], {
+    const agentBun = resolveBunInvocation(['run', agentScript]);
+    agentProc = spawn([agentBun.command, ...agentBun.args], {
       env: {
         ...process.env,
         BROWSE_SERVER_PORT: String(serverPort),

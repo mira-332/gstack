@@ -583,7 +583,10 @@ if [ ! -f ~/.gstack/projects/$SLUG/land-deploy-confirmed ]; then
 else
   # Check if deploy config has changed since confirmation
   SAVED_HASH=$(cat ~/.gstack/projects/$SLUG/land-deploy-confirmed 2>/dev/null)
-  CURRENT_HASH=$(sed -n '/## Deploy Configuration/,/^## /p' CLAUDE.md 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+  CURRENT_HASH=$( {
+    sed -n '/## Project Identity/,/^## /p' CLAUDE.md 2>/dev/null
+    sed -n '/## Deploy Configuration/,/^## /p' CLAUDE.md 2>/dev/null
+  } | shasum -a 256 | cut -d' ' -f1)
   # Also hash workflow files that affect deploy behavior
   WORKFLOW_HASH=$(find .github/workflows -maxdepth 1 \( -name '*deploy*' -o -name '*cd*' \) 2>/dev/null | xargs cat 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
   COMBINED_HASH="${CURRENT_HASH}-${WORKFLOW_HASH}"
@@ -621,14 +624,28 @@ Let me take a look at your setup."
 Run the deploy configuration bootstrap to detect the platform and settings:
 
 ```bash
-# Check for persisted deploy config in CLAUDE.md
-DEPLOY_CONFIG=$(grep -A 20 "## Deploy Configuration" CLAUDE.md 2>/dev/null || echo "NO_CONFIG")
+# Check for persisted project identity + deploy config in CLAUDE.md
+PROJECT_IDENTITY=$(sed -n '/^## Project Identity$/,/^## /p' CLAUDE.md 2>/dev/null || echo "NO_IDENTITY")
+DEPLOY_CONFIG=$(sed -n '/^## Deploy Configuration$/,/^## /p' CLAUDE.md 2>/dev/null || echo "NO_CONFIG")
+[ -n "$PROJECT_IDENTITY" ] || PROJECT_IDENTITY="NO_IDENTITY"
+[ -n "$DEPLOY_CONFIG" ] || DEPLOY_CONFIG="NO_CONFIG"
+echo "$PROJECT_IDENTITY"
 echo "$DEPLOY_CONFIG"
 
-# If config exists, parse it
+if [ "$PROJECT_IDENTITY" != "NO_IDENTITY" ]; then
+  REPO_URL=$(echo "$PROJECT_IDENTITY" | grep -m1 "^- Repository URL:" | sed 's/^- Repository URL:[[:space:]]*//' || true)
+  REPO_SLUG=$(echo "$PROJECT_IDENTITY" | grep -m1 "^- Repository Slug:" | sed 's/^- Repository Slug:[[:space:]]*//' || true)
+  [ -n "$REPO_URL" ] && echo "PERSISTED_REPO_URL:$REPO_URL"
+  [ -n "$REPO_SLUG" ] && echo "PERSISTED_REPO_SLUG:$REPO_SLUG"
+fi
+
 if [ "$DEPLOY_CONFIG" != "NO_CONFIG" ]; then
-  PROD_URL=$(echo "$DEPLOY_CONFIG" | grep -i "production.*url" | head -1 | sed 's/.*: *//')
-  PLATFORM=$(echo "$DEPLOY_CONFIG" | grep -i "platform" | head -1 | sed 's/.*: *//')
+  PROD_URL=$(echo "$DEPLOY_CONFIG" | grep -i "production.*url" | head -1 | sed 's/.*: *//' || true)
+  PLATFORM=$(echo "$DEPLOY_CONFIG" | grep -i "platform" | head -1 | sed 's/.*: *//' || true)
+  [ -z "${REPO_URL:-}" ] && REPO_URL=$(echo "$DEPLOY_CONFIG" | grep -m1 "^- Repository URL:" | sed 's/^- Repository URL:[[:space:]]*//' || true)
+  [ -z "${REPO_SLUG:-}" ] && REPO_SLUG=$(echo "$DEPLOY_CONFIG" | grep -m1 "^- Repository Slug:" | sed 's/^- Repository Slug:[[:space:]]*//' || true)
+  [ -n "$REPO_URL" ] && echo "PERSISTED_REPO_URL:$REPO_URL"
+  [ -n "$REPO_SLUG" ] && echo "PERSISTED_REPO_SLUG:$REPO_SLUG"
   echo "PERSISTED_PLATFORM:$PLATFORM"
   echo "PERSISTED_URL:$PROD_URL"
 fi
@@ -648,10 +665,11 @@ for f in $(find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml'
 done
 ```
 
-If `PERSISTED_PLATFORM` and `PERSISTED_URL` were found in CLAUDE.md, use them directly
-and skip manual detection. If no persisted config exists, use the auto-detected platform
-to guide deploy verification. If nothing is detected, ask the user via AskUserQuestion
-in the decision tree below.
+If `PERSISTED_REPO_URL` and `PERSISTED_REPO_SLUG` were found in CLAUDE.md, treat them
+as the canonical project identity. If `PERSISTED_PLATFORM` and `PERSISTED_URL` were
+found in CLAUDE.md, use them directly and skip manual detection. If no persisted config
+exists, use the auto-detected platform to guide deploy verification. If nothing is
+detected, ask the user via AskUserQuestion in the decision tree below.
 
 If you want to persist deploy settings for future runs, suggest the user run `/setup-deploy`.
 
@@ -721,7 +739,7 @@ CLI to verify the deploy worked."
 
 Check for staging environments in this order:
 
-1. **CLAUDE.md persisted config:** Check for a staging URL in the Deploy Configuration section:
+1. **CLAUDE.md persisted config:** Check for a staging URL in the Project Identity / Deploy Configuration sections:
 ```bash
 grep -i "staging" CLAUDE.md 2>/dev/null | head -3
 ```
@@ -777,7 +795,10 @@ Present the full dry-run results to the user via AskUserQuestion:
 Save the deploy config fingerprint so we can detect future changes:
 ```bash
 mkdir -p ~/.gstack/projects/$SLUG
-CURRENT_HASH=$(sed -n '/## Deploy Configuration/,/^## /p' CLAUDE.md 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+CURRENT_HASH=$( {
+  sed -n '/## Project Identity/,/^## /p' CLAUDE.md 2>/dev/null
+  sed -n '/## Deploy Configuration/,/^## /p' CLAUDE.md 2>/dev/null
+} | shasum -a 256 | cut -d' ' -f1)
 WORKFLOW_HASH=$(find .github/workflows -maxdepth 1 \( -name '*deploy*' -o -name '*cd*' \) 2>/dev/null | xargs cat 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
 echo "${CURRENT_HASH}-${WORKFLOW_HASH}" > ~/.gstack/projects/$SLUG/land-deploy-confirmed
 ```
@@ -1121,14 +1142,28 @@ Determine what kind of project this is and how to verify the deploy.
 First, run the deploy configuration bootstrap to detect or read persisted deploy settings:
 
 ```bash
-# Check for persisted deploy config in CLAUDE.md
-DEPLOY_CONFIG=$(grep -A 20 "## Deploy Configuration" CLAUDE.md 2>/dev/null || echo "NO_CONFIG")
+# Check for persisted project identity + deploy config in CLAUDE.md
+PROJECT_IDENTITY=$(sed -n '/^## Project Identity$/,/^## /p' CLAUDE.md 2>/dev/null || echo "NO_IDENTITY")
+DEPLOY_CONFIG=$(sed -n '/^## Deploy Configuration$/,/^## /p' CLAUDE.md 2>/dev/null || echo "NO_CONFIG")
+[ -n "$PROJECT_IDENTITY" ] || PROJECT_IDENTITY="NO_IDENTITY"
+[ -n "$DEPLOY_CONFIG" ] || DEPLOY_CONFIG="NO_CONFIG"
+echo "$PROJECT_IDENTITY"
 echo "$DEPLOY_CONFIG"
 
-# If config exists, parse it
+if [ "$PROJECT_IDENTITY" != "NO_IDENTITY" ]; then
+  REPO_URL=$(echo "$PROJECT_IDENTITY" | grep -m1 "^- Repository URL:" | sed 's/^- Repository URL:[[:space:]]*//' || true)
+  REPO_SLUG=$(echo "$PROJECT_IDENTITY" | grep -m1 "^- Repository Slug:" | sed 's/^- Repository Slug:[[:space:]]*//' || true)
+  [ -n "$REPO_URL" ] && echo "PERSISTED_REPO_URL:$REPO_URL"
+  [ -n "$REPO_SLUG" ] && echo "PERSISTED_REPO_SLUG:$REPO_SLUG"
+fi
+
 if [ "$DEPLOY_CONFIG" != "NO_CONFIG" ]; then
-  PROD_URL=$(echo "$DEPLOY_CONFIG" | grep -i "production.*url" | head -1 | sed 's/.*: *//')
-  PLATFORM=$(echo "$DEPLOY_CONFIG" | grep -i "platform" | head -1 | sed 's/.*: *//')
+  PROD_URL=$(echo "$DEPLOY_CONFIG" | grep -i "production.*url" | head -1 | sed 's/.*: *//' || true)
+  PLATFORM=$(echo "$DEPLOY_CONFIG" | grep -i "platform" | head -1 | sed 's/.*: *//' || true)
+  [ -z "${REPO_URL:-}" ] && REPO_URL=$(echo "$DEPLOY_CONFIG" | grep -m1 "^- Repository URL:" | sed 's/^- Repository URL:[[:space:]]*//' || true)
+  [ -z "${REPO_SLUG:-}" ] && REPO_SLUG=$(echo "$DEPLOY_CONFIG" | grep -m1 "^- Repository Slug:" | sed 's/^- Repository Slug:[[:space:]]*//' || true)
+  [ -n "$REPO_URL" ] && echo "PERSISTED_REPO_URL:$REPO_URL"
+  [ -n "$REPO_SLUG" ] && echo "PERSISTED_REPO_SLUG:$REPO_SLUG"
   echo "PERSISTED_PLATFORM:$PLATFORM"
   echo "PERSISTED_URL:$PROD_URL"
 fi
@@ -1148,10 +1183,11 @@ for f in $(find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml'
 done
 ```
 
-If `PERSISTED_PLATFORM` and `PERSISTED_URL` were found in CLAUDE.md, use them directly
-and skip manual detection. If no persisted config exists, use the auto-detected platform
-to guide deploy verification. If nothing is detected, ask the user via AskUserQuestion
-in the decision tree below.
+If `PERSISTED_REPO_URL` and `PERSISTED_REPO_SLUG` were found in CLAUDE.md, treat them
+as the canonical project identity. If `PERSISTED_PLATFORM` and `PERSISTED_URL` were
+found in CLAUDE.md, use them directly and skip manual detection. If no persisted config
+exists, use the auto-detected platform to guide deploy verification. If nothing is
+detected, ask the user via AskUserQuestion in the decision tree below.
 
 If you want to persist deploy settings for future runs, suggest the user run `/setup-deploy`.
 

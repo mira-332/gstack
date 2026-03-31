@@ -39,6 +39,12 @@ export interface BrowseSecretState {
   createdAt: string;
 }
 
+export interface ProjectIdentity {
+  repoUrl: string;
+  repoSlug: string;
+  source: 'env' | 'claude' | 'origin' | 'cwd';
+}
+
 /**
  * Detect the git repository root, or null if not in a repo / git unavailable.
  */
@@ -54,6 +60,96 @@ export function getGitRoot(): string | null {
   } catch {
     return null;
   }
+}
+
+function normalizeRepoSlug(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '');
+}
+
+function slugFromRepoUrl(url: string): string | null {
+  const trimmed = url.trim().replace(/\.git$/, '');
+  const match = trimmed.match(/[:/]([^/]+)\/([^/]+)$/);
+  if (!match) return null;
+  return normalizeRepoSlug(`${match[1]}-${match[2]}`);
+}
+
+function readMarkdownField(block: string, label: string): string {
+  const match = block.match(new RegExp(`^-[\\s]*${label}:[\\s]*(.+)$`, 'm'));
+  return match ? match[1].trim() : '';
+}
+
+function readClaudeSection(projectDir: string, heading: string): string {
+  const claudePath = path.join(projectDir, 'CLAUDE.md');
+  try {
+    const content = fs.readFileSync(claudePath, 'utf-8');
+    const lines = content.split(/\r?\n/);
+    const section: string[] = [];
+    let inSection = false;
+    for (const line of lines) {
+      if (line === `## ${heading}`) {
+        inSection = true;
+        section.push(line);
+        continue;
+      }
+      if (inSection && line.startsWith('## ')) break;
+      if (inSection) section.push(line);
+    }
+    return section.join('\n');
+  } catch {
+    return '';
+  }
+}
+
+export function resolveProjectIdentity(
+  projectDir: string = getGitRoot() || process.cwd(),
+  env: Record<string, string | undefined> = process.env,
+): ProjectIdentity {
+  const envUrl = env.GSTACK_REPO_URL || env.BROWSE_REPO_URL || '';
+  const envSlug = env.GSTACK_REPO_SLUG || env.BROWSE_REPO_SLUG || '';
+  if (envUrl || envSlug) {
+    return {
+      repoUrl: envUrl,
+      repoSlug: normalizeRepoSlug(envSlug || slugFromRepoUrl(envUrl) || path.basename(projectDir)),
+      source: 'env',
+    };
+  }
+
+  const projectBlock = readClaudeSection(projectDir, 'Project Identity');
+  const deployBlock = readClaudeSection(projectDir, 'Deploy Configuration');
+  const claudeUrl = readMarkdownField(projectBlock, 'Repository URL') || readMarkdownField(deployBlock, 'Repository URL');
+  const claudeSlug = readMarkdownField(projectBlock, 'Repository Slug') || readMarkdownField(deployBlock, 'Repository Slug');
+  if (claudeUrl || claudeSlug) {
+    return {
+      repoUrl: claudeUrl,
+      repoSlug: normalizeRepoSlug(claudeSlug || slugFromRepoUrl(claudeUrl) || path.basename(projectDir)),
+      source: 'claude',
+    };
+  }
+
+  try {
+    const proc = Bun.spawnSync(['git', 'remote', 'get-url', 'origin'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 2_000,
+    });
+    if (proc.exitCode === 0) {
+      const origin = proc.stdout.toString().trim();
+      const slug = slugFromRepoUrl(origin) || normalizeRepoSlug(path.basename(projectDir));
+      return {
+        repoUrl: origin,
+        repoSlug: slug,
+        source: 'origin',
+      };
+    }
+  } catch {
+    // fall through to cwd
+  }
+
+  return {
+    repoUrl: '',
+    repoSlug: normalizeRepoSlug(path.basename(projectDir)),
+    source: 'cwd',
+  };
 }
 
 /**
@@ -190,23 +286,7 @@ export function ensureStateDir(config: BrowseConfig): void {
  * Falls back to the directory basename if no remote is configured.
  */
 export function getRemoteSlug(): string {
-  try {
-    const proc = Bun.spawnSync(['git', 'remote', 'get-url', 'origin'], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-      timeout: 2_000,
-    });
-    if (proc.exitCode !== 0) throw new Error('no remote');
-    const url = proc.stdout.toString().trim();
-    // SSH:   git@github.com:owner/repo.git → owner-repo
-    // HTTPS: https://github.com/owner/repo.git → owner-repo
-    const match = url.match(/[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
-    if (match) return `${match[1]}-${match[2]}`;
-    throw new Error('unparseable');
-  } catch {
-    const root = getGitRoot();
-    return path.basename(root || process.cwd());
-  }
+  return resolveProjectIdentity().repoSlug;
 }
 
 /**

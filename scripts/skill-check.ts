@@ -10,9 +10,9 @@
 
 import { validateSkill } from '../test/helpers/skill-parser';
 import { discoverTemplates, discoverSkillFiles } from './discover-skills';
+import { runGenSkillDocs } from './gen-skill-docs';
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
 
 const ROOT = path.resolve(import.meta.dir, '..');
 
@@ -20,6 +20,17 @@ const ROOT = path.resolve(import.meta.dir, '..');
 const SKILL_FILES = discoverSkillFiles(ROOT);
 
 let hasErrors = false;
+
+function dryRunHost(hostArg: 'claude' | 'codex' | 'factory'): { exitCode: number; lines: string[] } {
+  const lines: string[] = [];
+  const exitCode = runGenSkillDocs({
+    hostArg,
+    dryRun: true,
+    log: line => lines.push(line),
+    error: line => lines.push(line),
+  });
+  return { exitCode, lines };
+}
 
 // ─── Skills ─────────────────────────────────────────────────
 
@@ -146,11 +157,12 @@ if (fs.existsSync(FACTORY_DIR)) {
 
 console.log('\n  Freshness (Claude):');
 try {
-  execSync('bun run scripts/gen-skill-docs.ts --dry-run', { cwd: ROOT, stdio: 'pipe' });
+  const result = dryRunHost('claude');
+  if (result.exitCode !== 0) throw result;
   console.log('  \u2705 All Claude generated files are fresh');
 } catch (err: any) {
   hasErrors = true;
-  const output = err.stdout?.toString() || '';
+  const output = (err.lines || []).join('\n');
   console.log('  \u274c Claude generated files are stale:');
   for (const line of output.split('\n').filter((l: string) => l.startsWith('STALE'))) {
     console.log(`      ${line}`);
@@ -160,11 +172,12 @@ try {
 
 console.log('\n  Freshness (Codex):');
 try {
-  execSync('bun run scripts/gen-skill-docs.ts --host codex --dry-run', { cwd: ROOT, stdio: 'pipe' });
+  const result = dryRunHost('codex');
+  if (result.exitCode !== 0) throw result;
   console.log('  \u2705 All Codex generated files are fresh');
 } catch (err: any) {
   hasErrors = true;
-  const output = err.stdout?.toString() || '';
+  const output = (err.lines || []).join('\n');
   console.log('  \u274c Codex generated files are stale:');
   for (const line of output.split('\n').filter((l: string) => l.startsWith('STALE'))) {
     console.log(`      ${line}`);
@@ -174,11 +187,12 @@ try {
 
 console.log('\n  Freshness (Factory):');
 try {
-  execSync('bun run scripts/gen-skill-docs.ts --host factory --dry-run', { cwd: ROOT, stdio: 'pipe' });
+  const result = dryRunHost('factory');
+  if (result.exitCode !== 0) throw result;
   console.log('  \u2705 All Factory generated files are fresh');
 } catch (err: any) {
   hasErrors = true;
-  const output = err.stdout?.toString() || '';
+  const output = (err.lines || []).join('\n');
   console.log('  \u274c Factory generated files are stale:');
   for (const line of output.split('\n').filter((l: string) => l.startsWith('STALE'))) {
     console.log(`      ${line}`);

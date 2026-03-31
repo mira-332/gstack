@@ -41,10 +41,18 @@ interface DiscoveryResult {
   total_repos: number;
 }
 
-// ── CLI parsing ────────────────────────────────────────────────────────────
+class CliExit extends Error {
+  exitCode: number;
+  showUsage: boolean;
 
-function printUsage(): void {
-  console.error(`Usage: gstack-global-discover --since <window> [--format json|summary]
+  constructor(exitCode: number, message = "", showUsage = false) {
+    super(message);
+    this.exitCode = exitCode;
+    this.showUsage = showUsage;
+  }
+}
+
+const USAGE_TEXT = `Usage: gstack-global-discover --since <window> [--format json|summary]
 
   --since <window>   Time window: e.g. 7d, 14d, 30d, 24h
   --format <fmt>     Output format: json (default) or summary
@@ -52,44 +60,40 @@ function printUsage(): void {
 
 Examples:
   gstack-global-discover --since 7d
-  gstack-global-discover --since 14d --format summary`);
+  gstack-global-discover --since 14d --format summary`;
+
+// ── CLI parsing ────────────────────────────────────────────────────────────
+
+function printUsage(write: (line: string) => void = console.error): void {
+  write(USAGE_TEXT);
 }
 
-function parseArgs(): { since: string; format: "json" | "summary" } {
-  const args = process.argv.slice(2);
+function parseArgs(args: string[]): { since: string; format: "json" | "summary" } {
   let since = "";
   let format: "json" | "summary" = "json";
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--help" || args[i] === "-h") {
-      printUsage();
-      process.exit(0);
+      throw new CliExit(0, "", true);
     } else if (args[i] === "--since" && args[i + 1]) {
       since = args[++i];
     } else if (args[i] === "--format" && args[i + 1]) {
       const f = args[++i];
       if (f !== "json" && f !== "summary") {
-        console.error(`Invalid format: ${f}. Use 'json' or 'summary'.`);
-        printUsage();
-        process.exit(1);
+        throw new CliExit(1, `Invalid format: ${f}. Use 'json' or 'summary'.`, true);
       }
       format = f;
     } else {
-      console.error(`Unknown argument: ${args[i]}`);
-      printUsage();
-      process.exit(1);
+      throw new CliExit(1, `Unknown argument: ${args[i]}`, true);
     }
   }
 
   if (!since) {
-    console.error("Error: --since is required.");
-    printUsage();
-    process.exit(1);
+    throw new CliExit(1, "Error: --since is required.", true);
   }
 
   if (!/^\d+(d|h|w)$/.test(since)) {
-    console.error(`Invalid window format: ${since}. Use e.g. 7d, 24h, 2w.`);
-    process.exit(1);
+    throw new CliExit(1, `Invalid window format: ${since}. Use e.g. 7d, 24h, 2w.`);
   }
 
   return { since, format };
@@ -521,8 +525,29 @@ async function resolveAndDeduplicate(sessions: Session[]): Promise<Repo[]> {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
-async function main() {
-  const { since, format } = parseArgs();
+interface CliWriters {
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+}
+
+export async function runCli(args: string[] = process.argv.slice(2), io: CliWriters = {}): Promise<number> {
+  const stdout = io.stdout ?? console.log;
+  const stderr = io.stderr ?? console.error;
+
+  let since: string;
+  let format: "json" | "summary";
+
+  try {
+    ({ since, format } = parseArgs(args));
+  } catch (err) {
+    if (err instanceof CliExit) {
+      if (err.message) stderr(err.message);
+      if (err.showUsage) printUsage(stderr);
+      return err.exitCode;
+    }
+    throw err;
+  }
+
   const sinceDate = windowToDate(since);
   const startDate = sinceDate.toISOString().split("T")[0];
 
@@ -534,14 +559,14 @@ async function main() {
   const allSessions = [...ccSessions, ...codexSessions, ...geminiSessions];
 
   // Summary to stderr
-  console.error(
+  stderr(
     `Discovered: ${ccSessions.length} CC sessions, ${codexSessions.length} Codex sessions, ${geminiSessions.length} Gemini sessions`
   );
 
   // Deduplicate
   const repos = await resolveAndDeduplicate(allSessions);
 
-  console.error(`→ ${repos.length} unique repos`);
+  stderr(`→ ${repos.length} unique repos`);
 
   // Count per-tool repo counts
   const ccRepos = new Set(repos.filter((r) => r.sessions.claude_code > 0).map((r) => r.remote)).size;
@@ -562,29 +587,33 @@ async function main() {
   };
 
   if (format === "json") {
-    console.log(JSON.stringify(result, null, 2));
+    stdout(JSON.stringify(result, null, 2));
   } else {
     // Summary format
-    console.log(`Window: ${since} (since ${startDate})`);
-    console.log(`Sessions: ${allSessions.length} total (CC: ${ccSessions.length}, Codex: ${codexSessions.length}, Gemini: ${geminiSessions.length})`);
-    console.log(`Repos: ${repos.length} unique`);
-    console.log("");
+    stdout(`Window: ${since} (since ${startDate})`);
+    stdout(`Sessions: ${allSessions.length} total (CC: ${ccSessions.length}, Codex: ${codexSessions.length}, Gemini: ${geminiSessions.length})`);
+    stdout(`Repos: ${repos.length} unique`);
+    stdout("");
     for (const repo of repos) {
       const total = repo.sessions.claude_code + repo.sessions.codex + repo.sessions.gemini;
       const tools = [];
       if (repo.sessions.claude_code > 0) tools.push(`CC:${repo.sessions.claude_code}`);
       if (repo.sessions.codex > 0) tools.push(`Codex:${repo.sessions.codex}`);
       if (repo.sessions.gemini > 0) tools.push(`Gemini:${repo.sessions.gemini}`);
-      console.log(`  ${repo.name} (${total} sessions) — ${tools.join(", ")}`);
-      console.log(`    Remote: ${repo.remote}`);
-      console.log(`    Paths: ${repo.paths.join(", ")}`);
+      stdout(`  ${repo.name} (${total} sessions) — ${tools.join(", ")}`);
+      stdout(`    Remote: ${repo.remote}`);
+      stdout(`    Paths: ${repo.paths.join(", ")}`);
     }
   }
+
+  return 0;
 }
 
 // Only run main when executed directly (not when imported for testing)
 if (import.meta.main) {
-  main().catch((err) => {
+  runCli().then((exitCode) => {
+    if (exitCode !== 0) process.exit(exitCode);
+  }).catch((err) => {
     console.error(`Fatal error: ${err.message}`);
     process.exit(1);
   });
